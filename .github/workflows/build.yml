@@ -23,14 +23,21 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore LocalCrypto.csproj
 
-      - name: Build (Release)
-        run: dotnet build LocalCrypto.csproj --no-restore -c Release
-
       - name: Publish Windows x64
-        run: dotnet publish LocalCrypto.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+        run: dotnet publish LocalCrypto.csproj --no-restore -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:DebugSymbols=false -o ./publish
 
-      - name: Upload Windows artifact
+      - name: Build Windows Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc packaging\LocalCrypto.iss
+
+      - name: Upload Windows Installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: LocalCrypto-win-x64
-          path: ./publish
+          path: ./dist/LocalCrypto-Setup-1.0.0.exe
+          if-no-files-found: error
