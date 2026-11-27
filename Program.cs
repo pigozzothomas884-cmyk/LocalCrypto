@@ -68,7 +68,6 @@ namespace LocalCrypto
         private string _selectedFolder = "";
         private int _driveIndex = 0;
         private readonly string[] _drives = { "V:", "W:", "X:", "Y:", "Z:" };
-        private bool _forceExit = false;
         private bool _recoveryMode = false;
 
         private readonly NotifyIcon _trayIcon;
@@ -101,12 +100,16 @@ namespace LocalCrypto
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield;
             AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(460, 232);
+            MinimumSize = new Size(460, 232);
             StartPosition = FormStartPosition.CenterScreen;
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            WindowState = FormWindowState.Normal;
+            ShowInTaskbar = true;
             BackColor = BgRoot;
             ForeColor = TextPrimary;
             Font = new Font("Segoe UI", 9.5f);
+
+            Shown += (_, _) => RestoreWindow();
 
             StartIpcListener(pipeName);
 
@@ -128,7 +131,6 @@ namespace LocalCrypto
             trayMenu.Items.Add("Blocca disco", null, (_, _) => LockAndUnmount());
             trayMenu.Items.Add("Esci", null, (_, _) =>
             {
-                _forceExit = true;
                 LockAndUnmount();
                 if (_activeVault == null)
                 {
@@ -140,19 +142,21 @@ namespace LocalCrypto
 
             FormClosing += (_, e) =>
             {
-                if (!_forceExit && e.CloseReason == CloseReason.UserClosing)
+                if (e.CloseReason == CloseReason.UserClosing)
                 {
-                    e.Cancel = true;
-                    Hide();
                     if (_activeVault != null)
                     {
-                        _trayIcon.ShowBalloonTip(
-                            2000,
-                            "LocalCrypto",
-                            $"{_activeVault.DiskName} ({_activeVault.DriveLetter}) attivo in background.",
-                            ToolTipIcon.Info);
+                        LockAndUnmount();
                     }
                 }
+
+                if (_activeVault != null)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                _trayIcon.Visible = false;
             };
 
             // --- HEADER ---
