@@ -176,11 +176,18 @@ namespace LocalCrypto
         public static void DecryptAllToFolder(string encryptedRoot, string plainTargetRoot, byte[] masterKey)
         {
             Directory.CreateDirectory(plainTargetRoot);
+            string targetRoot = Path.GetFullPath(plainTargetRoot);
+            if (!targetRoot.EndsWith(Path.DirectorySeparatorChar))
+                targetRoot += Path.DirectorySeparatorChar;
+
             foreach (var encFile in Directory.GetFiles(encryptedRoot, "*.lc"))
             {
                 string b64Url = Path.GetFileNameWithoutExtension(encFile);
                 string relPath = Encoding.UTF8.GetString(DecryptBytes(FromBase64Url(b64Url), masterKey));
                 string destPath = Path.Combine(plainTargetRoot, relPath);
+                destPath = Path.GetFullPath(destPath);
+                if (!destPath.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase))
+                    throw new CryptographicException("Percorso di file cifrato non valido.");
 
                 string? destDir = Path.GetDirectoryName(destPath);
                 if (!string.IsNullOrEmpty(destDir))

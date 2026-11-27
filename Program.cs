@@ -4,6 +4,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Printing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace LocalCrypto
@@ -30,7 +31,7 @@ namespace LocalCrypto
             _trayIcon = new NotifyIcon
             {
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield,
-                Text = "LocalCrypto - CiaoDev",
+                Text = "LocalCrypto - CiaoDev™",
                 Visible = true
             };
 
@@ -40,7 +41,12 @@ namespace LocalCrypto
                     _popup.ToggleNearTray();
             };
 
-            var menu = new ContextMenuStrip();
+            var menu = new ContextMenuStrip
+            {
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(29, 29, 31),
+                ShowImageMargin = false
+            };
             menu.Items.Add("Apri LocalCrypto", null, (_, _) => _popup.ToggleNearTray());
             menu.Items.Add("Blocca tutto ed esci", null, (_, _) =>
             {
@@ -50,72 +56,46 @@ namespace LocalCrypto
             });
             _trayIcon.ContextMenuStrip = menu;
         }
-
-        private static Icon CreateFlatShieldIcon()
-        {
-            using var bmp = new Bitmap(32, 32);
-            using var g = Graphics.FromImage(bmp);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
-
-            using var bgBrush = new SolidBrush(Color.FromArgb(37, 99, 235));
-            using var path = new GraphicsPath();
-            path.AddRoundedRectangle(new Rectangle(2, 2, 28, 28), 7);
-            g.FillPath(bgBrush, path);
-
-            using var pen = new Pen(Color.White, 2.4f);
-            g.DrawArc(pen, 11, 8, 10, 9, 180, 180);
-            g.DrawLine(pen, 11, 12, 11, 15);
-            g.DrawLine(pen, 21, 12, 21, 15);
-            using var whiteBrush = new SolidBrush(Color.White);
-            g.FillRectangle(whiteBrush, 9, 15, 14, 10);
-
-            return Icon.FromHandle(bmp.GetHicon());
-        }
-    }
-
-    internal static class GraphicsExtensions
-    {
-        public static void AddRoundedRectangle(this GraphicsPath path, Rectangle bounds, int radius)
-        {
-            int d = radius * 2;
-            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
-            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
-            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
-            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
-            path.CloseFigure();
-        }
     }
 
     public sealed class CiaoDevPopupForm : Form
     {
-        // Palette CiaoDev Dark Flat
-        private static readonly Color BgRoot = Color.FromArgb(18, 20, 24);
-        private static readonly Color BgSurface = Color.FromArgb(26, 29, 36);
-        private static readonly Color BorderSubtle = Color.FromArgb(44, 49, 60);
-        private static readonly Color TextPrimary = Color.FromArgb(243, 244, 246);
-        private static readonly Color TextMuted = Color.FromArgb(148, 156, 170);
-        private static readonly Color AccentBlue = Color.FromArgb(37, 99, 235);
-        private static readonly Color DangerRed = Color.FromArgb(185, 28, 28);
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        // Palette ufficiale CiaoDev™ (style.css)
+        private static readonly Color BgRoot = Color.White;
+        private static readonly Color BgAlt = Color.FromArgb(245, 245, 247);      // --bg-alt: #f5f5f7
+        private static readonly Color TextPrimary = Color.FromArgb(29, 29, 31);     // --text: #1d1d1f
+        private static readonly Color TextMuted = Color.FromArgb(110, 110, 115);    // --text-muted: #6e6e73
+        private static readonly Color Accent = Color.FromArgb(0, 113, 227);         // --accent: #0071e3
+        private static readonly Color AccentHover = Color.FromArgb(0, 119, 237);    // --accent-hover: #0077ed
+        private static readonly Color BorderSubtle = Color.FromArgb(229, 229, 234); // --border: #e5e5ea
 
         private MountedVault? _activeVault;
         private string _selectedFolder = "";
+        private int _driveIndex = 0;
+        private readonly string[] _drives = { "V:", "W:", "X:", "Y:", "Z:" };
 
-        private readonly Label _lblFolder;
-        private readonly Label _lblMountBadge;
+        private readonly Label _lblStatus;
+        private readonly Label _lblFolderPath;
         private readonly TextBox _txtSecret;
         private readonly CheckBox _chkRecovery;
-        private readonly ComboBox _cmbDrive;
+        private readonly PillButton _btnDrive;
 
         public CiaoDevPopupForm()
         {
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             TopMost = true;
-            Size = new Size(360, 345);
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = BgRoot;
             ForeColor = TextPrimary;
             Font = new Font("Segoe UI", 9.5f);
+            Padding = new Padding(22);
+            MinimumSize = new Size(420, 440);
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
             Deactivate += (_, _) =>
             {
@@ -128,69 +108,156 @@ namespace LocalCrypto
                 e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
             };
 
-            // Header
-            var lblApp = new Label
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = BgRoot
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            // 1. Header con logo e marchio CiaoDev™
+            var header = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 3,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 4)
+            };
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            var picLogo = new PictureBox
+            {
+                Size = new Size(28, 28),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = (Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield).ToBitmap(),
+                Margin = new Padding(0, 0, 10, 0),
+                Anchor = AnchorStyles.Left
+            };
+
+            var lblTitle = new Label
             {
                 Text = "LocalCrypto",
-                Font = new Font("Segoe UI", 11.5f, FontStyle.Bold),
-                Location = new Point(18, 14),
-                AutoSize = true
+                Font = new Font("Segoe UI", 13.5f, FontStyle.Bold),
+                ForeColor = TextPrimary,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
             };
 
-            var lblCompany = new Label
+            var lblBrand = new PillBadge("CiaoDev™", BgAlt, TextMuted)
             {
-                Text = "CiaoDev",
-                Font = new Font("Segoe UI", 8.5f),
-                ForeColor = TextMuted,
-                Location = new Point(292, 17),
-                AutoSize = true
+                Anchor = AnchorStyles.Right
             };
 
-            _lblMountBadge = new Label
+            header.Controls.Add(picLogo, 0, 0);
+            header.Controls.Add(lblTitle, 1, 0);
+            header.Controls.Add(lblBrand, 2, 0);
+            root.Controls.Add(header);
+
+            // 2. Stato attivo
+            _lblStatus = new Label
             {
-                Text = "Stato: Nessuna unita' montata",
-                Font = new Font("Segoe UI", 8.5f),
+                Text = "Nessuna unita' montata",
+                Font = new Font("Segoe UI", 9f),
                 ForeColor = TextMuted,
-                Location = new Point(18, 40),
-                Size = new Size(324, 18)
+                AutoSize = true,
+                Margin = new Padding(0, 2, 0, 16)
+            };
+            root.Controls.Add(_lblStatus);
+
+            // 3. Card Cartella arrotondata (#f5f5f7)
+            var folderCard = new RoundedCardPanel(BgAlt, BorderSubtle, 16)
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                Padding = new Padding(14, 0, 14, 0),
+                Margin = new Padding(0, 0, 0, 10)
             };
 
-            // Selezione cartella
-            _lblFolder = new Label
+            _lblFolderPath = new Label
             {
-                Text = "Nessuna cartella selezionata",
-                BackColor = BgSurface,
-                ForeColor = TextMuted,
+                Text = "Seleziona una cartella su Drive o locale...",
+                Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(8, 0, 8, 0),
-                Location = new Point(18, 68),
-                Size = new Size(324, 30)
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoEllipsis = true
             };
+            folderCard.Controls.Add(_lblFolderPath);
+            root.Controls.Add(folderCard);
 
-            var btnBrowse = CreateFlatButton("Scegli cartella...", 18, 106, 158, BgSurface);
+            // 4. Pulsanti a pillola Scegli / Cifra
+            var folderActions = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 2,
+                Height = 40,
+                Margin = new Padding(0, 0, 0, 16)
+            };
+            folderActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            folderActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+
+            var btnBrowse = new PillButton("Scegli cartella", BgRoot, Accent, Accent, Accent, Color.White)
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 6, 0)
+            };
             btnBrowse.Click += (_, _) => PickFolder();
 
-            var btnInit = CreateFlatButton("Crea / Cifra cartella", 184, 106, 158, BgSurface);
-            btnInit.Click += (_, _) => InitializeOrEncryptFolder();
+            var btnEncrypt = new PillButton("Crea / Cifra", BgRoot, BorderSubtle, TextPrimary, BgAlt, TextPrimary)
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(6, 0, 0, 0)
+            };
+            btnEncrypt.Click += (_, _) => InitializeOrEncryptFolder();
 
-            // Input password / recovery key
+            folderActions.Controls.Add(btnBrowse, 0, 0);
+            folderActions.Controls.Add(btnEncrypt, 1, 0);
+            root.Controls.Add(folderActions);
+
+            // 5. Campo Password a pillola (.search-input style)
+            var pwdCard = new RoundedCardPanel(BgAlt, BorderSubtle, 20)
+            {
+                Dock = DockStyle.Top,
+                Height = 42,
+                Padding = new Padding(16, 10, 16, 8),
+                Margin = new Padding(0, 0, 0, 10)
+            };
+
             _txtSecret = new TextBox
             {
                 PlaceholderText = "Password cartella",
                 UseSystemPasswordChar = true,
-                BackColor = BgSurface,
+                BackColor = BgAlt,
                 ForeColor = TextPrimary,
-                BorderStyle = BorderStyle.FixedSingle,
-                Location = new Point(18, 150),
-                Size = new Size(324, 28)
+                BorderStyle = BorderStyle.None,
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10f)
             };
+            pwdCard.Controls.Add(_txtSecret);
+            root.Controls.Add(pwdCard);
+
+            // 6. Riga Recovery Key + Reimposta password
+            var recoveryRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 2,
+                AutoSize = true,
+                Margin = new Padding(2, 0, 2, 16)
+            };
+            recoveryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            recoveryRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
             _chkRecovery = new CheckBox
             {
-                Text = "Sblocca con chiave di recupero",
+                Text = "Usa chiave di recupero",
                 ForeColor = TextMuted,
-                Location = new Point(18, 184),
-                AutoSize = true
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
             };
             _chkRecovery.CheckedChanged += (_, _) =>
             {
@@ -200,70 +267,83 @@ namespace LocalCrypto
                     : "Password cartella";
             };
 
-            var lnkResetPwd = new LinkLabel
+            var lnkReset = new LinkLabel
             {
                 Text = "Reimposta password",
-                LinkColor = AccentBlue,
-                ActiveLinkColor = TextPrimary,
-                Location = new Point(230, 185),
-                AutoSize = true
+                LinkColor = Accent,
+                ActiveLinkColor = AccentHover,
+                LinkBehavior = LinkBehavior.HoverUnderline,
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(12, 2, 0, 0)
             };
-            lnkResetPwd.LinkClicked += (_, _) => ResetPasswordFlow();
+            lnkReset.LinkClicked += (_, _) => ResetPasswordFlow();
 
-            // Lettera unita' + Monta
-            _cmbDrive = new ComboBox
+            recoveryRow.Controls.Add(_chkRecovery, 0, 0);
+            recoveryRow.Controls.Add(lnkReset, 1, 0);
+            root.Controls.Add(recoveryRow);
+
+            // 7. Selettore unita' a pillola + CTA Primaria (#0071e3)
+            var mountRow = new TableLayoutPanel
             {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = BgSurface,
-                ForeColor = TextPrimary,
-                Location = new Point(18, 218),
-                Size = new Size(82, 28)
+                Dock = DockStyle.Top,
+                ColumnCount = 2,
+                Height = 42,
+                Margin = new Padding(0, 0, 0, 10)
             };
-            _cmbDrive.Items.AddRange(new object[] { "V:", "W:", "X:", "Y:", "Z:" });
-            _cmbDrive.SelectedIndex = 0;
+            mountRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96f));
+            mountRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
 
-            var btnMount = CreateFlatButton("Sblocca e monta disco", 108, 217, 234, AccentBlue);
+            _btnDrive = new PillButton("Unita' V:", BgAlt, BorderSubtle, TextPrimary, BorderSubtle, TextPrimary)
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            _btnDrive.Click += (_, _) =>
+            {
+                _driveIndex = (_driveIndex + 1) % _drives.Length;
+                _btnDrive.Text = $"Unita' {_drives[_driveIndex]}";
+            };
+
+            var btnMount = new PillButton("Sblocca e monta disco", Accent, Accent, Color.White, AccentHover, Color.White)
+            {
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold)
+            };
             btnMount.Click += (_, _) => UnlockAndMount();
 
-            // Blocca e smonta
-            var btnLock = CreateFlatButton("Blocca e smonta unita' attiva", 18, 260, 324, BgSurface);
-            btnLock.Click += (_, _) => LockAndUnmount();
+            mountRow.Controls.Add(_btnDrive, 0, 0);
+            mountRow.Controls.Add(btnMount, 1, 0);
+            root.Controls.Add(mountRow);
 
-            // Footer
+            // 8. Bottone secondario Blocca e smonta
+            var btnLock = new PillButton("Blocca e smonta unita' attiva", BgRoot, BorderSubtle, TextMuted, BgAlt, TextPrimary)
+            {
+                Dock = DockStyle.Top,
+                Height = 38,
+                Margin = new Padding(0, 0, 0, 14)
+            };
+            btnLock.Click += (_, _) => LockAndUnmount();
+            root.Controls.Add(btnLock);
+
+            // 9. Footer minimale
             var lblFooter = new Label
             {
-                Text = "Disco locale privato (non condiviso in rete)",
-                Font = new Font("Segoe UI", 8f),
+                Text = "Disco locale privato non condiviso in rete  •  CiaoDev™",
+                Font = new Font("Segoe UI", 8.2f),
                 ForeColor = TextMuted,
-                Location = new Point(18, 312),
                 AutoSize = true
             };
+            root.Controls.Add(lblFooter);
 
-            Controls.AddRange(new Control[]
-            {
-                lblApp, lblCompany, _lblMountBadge,
-                _lblFolder, btnBrowse, btnInit,
-                _txtSecret, _chkRecovery, lnkResetPwd,
-                _cmbDrive, btnMount, btnLock, lblFooter
-            });
+            Controls.Add(root);
         }
 
-        private static Button CreateFlatButton(string text, int x, int y, int w, Color bg)
+        protected override void OnHandleCreated(EventArgs e)
         {
-            var btn = new Button
-            {
-                Text = text,
-                Location = new Point(x, y),
-                Size = new Size(w, 32),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = bg,
-                ForeColor = TextPrimary,
-                Cursor = Cursors.Hand
-            };
-            btn.FlatAppearance.BorderColor = BorderSubtle;
-            btn.FlatAppearance.BorderSize = 1;
-            return btn;
+            base.OnHandleCreated(e);
+            int cornerPreference = 2; // DWMWCP_ROUND su Windows 11
+            DwmSetWindowAttribute(Handle, 33, ref cornerPreference, sizeof(int));
         }
 
         public void ToggleNearTray()
@@ -274,8 +354,9 @@ namespace LocalCrypto
                 return;
             }
 
+            PerformLayout();
             var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-            Location = new Point(area.Right - Width - 12, area.Bottom - Height - 12);
+            Location = new Point(area.Right - Width - 16, area.Bottom - Height - 16);
             Show();
             Activate();
         }
@@ -292,8 +373,8 @@ namespace LocalCrypto
             {
                 _selectedFolder = dlg.SelectedPath;
                 bool isVault = VaultCrypto.IsVault(_selectedFolder);
-                _lblFolder.Text = (isVault ? "[Cifrata] " : "[In chiaro] ") + _selectedFolder;
-                _lblFolder.ForeColor = TextPrimary;
+                _lblFolderPath.Text = (isVault ? "[Cifrata] " : "[In chiaro] ") + _selectedFolder;
+                _lblFolderPath.ForeColor = TextPrimary;
             }
         }
 
@@ -345,7 +426,7 @@ namespace LocalCrypto
                 }
             }
 
-            _lblFolder.Text = "[Cifrata] " + _selectedFolder;
+            _lblFolderPath.Text = "[Cifrata] " + _selectedFolder;
             _txtSecret.Clear();
             ShowRecoveryKeyOptions(recoveryKey);
         }
@@ -354,7 +435,7 @@ namespace LocalCrypto
         {
             string sheet =
                 "====================================================\r\n" +
-                "  LOCALCRYPTO - CHIAVE DI RECUPERO (CiaoDev)\r\n" +
+                "  LOCALCRYPTO - CHIAVE DI RECUPERO (CiaoDev™)\r\n" +
                 "====================================================\r\n" +
                 $"Cartella : {_selectedFolder}\r\n" +
                 $"Creata il: {DateTime.Now:dd/MM/yyyy HH:mm}\r\n\r\n" +
@@ -414,11 +495,11 @@ namespace LocalCrypto
             {
                 LockAndUnmount();
                 byte[] mk = VaultCrypto.UnlockMasterKey(_selectedFolder, _txtSecret.Text, _chkRecovery.Checked);
-                string drive = _cmbDrive.SelectedItem?.ToString() ?? "V:";
+                string drive = _drives[_driveIndex];
 
                 _activeVault = new MountedVault(drive, _selectedFolder, mk);
-                _lblMountBadge.Text = $"Attivo: Unita' {drive} -> {Path.GetFileName(_selectedFolder)}";
-                _lblMountBadge.ForeColor = Color.FromArgb(96, 165, 250);
+                _lblStatus.Text = $"Attivo: {drive} -> {Path.GetFileName(_selectedFolder)}";
+                _lblStatus.ForeColor = Accent;
                 _txtSecret.Clear();
             }
             catch
@@ -437,7 +518,7 @@ namespace LocalCrypto
 
             if (!_chkRecovery.Checked || string.IsNullOrWhiteSpace(_txtSecret.Text))
             {
-                MessageBox.Show("Spunta 'Sblocca con chiave di recupero' e incolla la chiave nel campo sopra.", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Spunta 'Usa chiave di recupero' e incolla la chiave nel campo sopra.", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -463,7 +544,7 @@ namespace LocalCrypto
             using var dlg = new Form
             {
                 Text = "LocalCrypto - Nuova password",
-                Size = new Size(320, 145),
+                Size = new Size(360, 175),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -472,21 +553,32 @@ namespace LocalCrypto
                 ForeColor = TextPrimary
             };
 
+            var card = new RoundedCardPanel(BgAlt, BorderSubtle, 20)
+            {
+                Location = new Point(20, 20),
+                Size = new Size(304, 42),
+                Padding = new Padding(14, 10, 14, 8)
+            };
+
             var box = new TextBox
             {
                 PlaceholderText = "Nuova password (min. 6 caratteri)",
                 UseSystemPasswordChar = true,
-                BackColor = BgSurface,
+                BackColor = BgAlt,
                 ForeColor = TextPrimary,
-                BorderStyle = BorderStyle.FixedSingle,
-                Location = new Point(16, 18),
-                Size = new Size(270, 26)
+                BorderStyle = BorderStyle.None,
+                Dock = DockStyle.Fill
+            };
+            card.Controls.Add(box);
+
+            var ok = new PillButton("Conferma", Accent, Accent, Color.White, AccentHover, Color.White)
+            {
+                Location = new Point(20, 76),
+                Size = new Size(304, 40),
+                DialogResult = DialogResult.OK
             };
 
-            var ok = CreateFlatButton("Conferma", 16, 56, 270, AccentBlue);
-            ok.DialogResult = DialogResult.OK;
-
-            dlg.Controls.AddRange(new Control[] { box, ok });
+            dlg.Controls.AddRange(new Control[] { card, ok });
             dlg.AcceptButton = ok;
 
             return dlg.ShowDialog() == DialogResult.OK ? box.Text : "";
@@ -496,8 +588,135 @@ namespace LocalCrypto
         {
             _activeVault?.Dispose();
             _activeVault = null;
-            _lblMountBadge.Text = "Stato: Nessuna unita' montata";
-            _lblMountBadge.ForeColor = TextMuted;
+            _lblStatus.Text = "Nessuna unita' montata";
+            _lblStatus.ForeColor = TextMuted;
+        }
+    }
+
+    public sealed class RoundedCardPanel : Panel
+    {
+        private readonly Color _fill;
+        private readonly Color _border;
+        private readonly int _radius;
+
+        public RoundedCardPanel(Color fill, Color border, int radius)
+        {
+            _fill = fill;
+            _border = border;
+            _radius = radius;
+            BackColor = Color.Transparent;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+            using var path = PillButton.CreateRoundRect(rect, _radius);
+            using var brush = new SolidBrush(_fill);
+            using var pen = new Pen(_border, 1);
+            e.Graphics.FillPath(brush, path);
+            e.Graphics.DrawPath(pen, path);
+        }
+    }
+
+    public sealed class PillBadge : Control
+    {
+        private readonly Color _bg;
+        public PillBadge(string text, Color bg, Color fg)
+        {
+            Text = text;
+            _bg = bg;
+            ForeColor = fg;
+            Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold);
+            Size = new Size(76, 24);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+            using var path = PillButton.CreateRoundRect(rect, Height / 2);
+            using var brush = new SolidBrush(_bg);
+            e.Graphics.FillPath(brush, path);
+            TextRenderer.DrawText(e.Graphics, Text, Font, rect, ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+    }
+
+    public sealed class PillButton : Control, IButtonControl
+    {
+        private readonly Color _bg;
+        private readonly Color _border;
+        private readonly Color _fg;
+        private readonly Color _hoverBg;
+        private readonly Color _hoverFg;
+        private bool _hover;
+
+        public DialogResult DialogResult { get; set; } = DialogResult.None;
+
+        public PillButton(string text, Color bg, Color border, Color fg, Color hoverBg, Color hoverFg)
+        {
+            Text = text;
+            _bg = bg;
+            _border = border;
+            _fg = fg;
+            _hoverBg = hoverBg;
+            _hoverFg = hoverFg;
+            Cursor = Cursors.Hand;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+            if (DialogResult != DialogResult.None && FindForm() is Form f)
+                f.DialogResult = DialogResult;
+        }
+
+        public void NotifyDefault(bool value)
+        {
+        }
+
+        public void PerformClick()
+        {
+            if (Enabled)
+                OnClick(EventArgs.Empty);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+            using var path = CreateRoundRect(rect, Height / 2);
+
+            Color fill = _hover ? _hoverBg : _bg;
+            Color textCol = _hover ? _hoverFg : _fg;
+            Color borderCol = _hover ? _hoverBg : _border;
+
+            using var brush = new SolidBrush(fill);
+            using var pen = new Pen(borderCol, 1);
+
+            e.Graphics.FillPath(brush, path);
+            e.Graphics.DrawPath(pen, path);
+
+            TextRenderer.DrawText(e.Graphics, Text, Font, rect, textCol,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+
+        public static GraphicsPath CreateRoundRect(Rectangle r, int radius)
+        {
+            int d = Math.Max(1, radius * 2);
+            var p = new GraphicsPath();
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
         }
     }
 }

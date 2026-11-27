@@ -32,26 +32,43 @@ namespace LocalCrypto
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "CiaoDev", "LocalCrypto", "Mount", Guid.NewGuid().ToString("N"));
 
-            VaultCrypto.DecryptAllToFolder(encryptedFolder, PlainCacheFolder, _masterKey);
-
-            if (!DefineDosDevice(0, DriveLetter, PlainCacheFolder))
-                throw new IOException($"Impossibile montare l'unita' locale {DriveLetter}.");
-
-            _debounceTimer = new System.Threading.Timer(_ => SyncAllToEncrypted(), null, Timeout.Infinite, Timeout.Infinite);
-
-            _watcher = new FileSystemWatcher(PlainCacheFolder)
+            try
             {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-                EnableRaisingEvents = true
-            };
+                VaultCrypto.DecryptAllToFolder(encryptedFolder, PlainCacheFolder, _masterKey);
 
-            _watcher.Changed += (_, _) => ScheduleSync();
-            _watcher.Created += (_, _) => ScheduleSync();
-            _watcher.Renamed += (_, _) => ScheduleSync();
-            _watcher.Deleted += (_, _) => ScheduleSync();
+                if (!DefineDosDevice(0, DriveLetter, PlainCacheFolder))
+                    throw new IOException($"Impossibile montare l'unita' locale {DriveLetter}.");
 
-            Process.Start(new ProcessStartInfo("explorer.exe", DriveLetter + "\\") { UseShellExecute = true });
+                _debounceTimer = new System.Threading.Timer(_ => SyncAllToEncrypted(), null, Timeout.Infinite, Timeout.Infinite);
+
+                _watcher = new FileSystemWatcher(PlainCacheFolder)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                    EnableRaisingEvents = true
+                };
+
+                _watcher.Changed += (_, _) => ScheduleSync();
+                _watcher.Created += (_, _) => ScheduleSync();
+                _watcher.Renamed += (_, _) => ScheduleSync();
+                _watcher.Deleted += (_, _) => ScheduleSync();
+
+                Process.Start(new ProcessStartInfo("explorer.exe", DriveLetter + "\\") { UseShellExecute = true });
+            }
+            catch
+            {
+                DefineDosDevice(DDD_REMOVE_DEFINITION, DriveLetter, null);
+                Array.Clear(_masterKey, 0, _masterKey.Length);
+
+                try
+                {
+                    if (Directory.Exists(PlainCacheFolder))
+                        Directory.Delete(PlainCacheFolder, recursive: true);
+                }
+                catch { }
+
+                throw;
+            }
         }
 
         private void ScheduleSync()

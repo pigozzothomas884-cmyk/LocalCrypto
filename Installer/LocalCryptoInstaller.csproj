@@ -1,0 +1,217 @@
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.IO;
+using System.Reflection;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Win32;
+
+namespace LocalCryptoInstaller
+{
+    internal static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            ApplicationConfiguration.Initialize();
+            Application.Run(new SetupForm());
+        }
+    }
+
+    public sealed class SetupForm : Form
+    {
+        private static readonly Color BgRoot = Color.White;
+        private static readonly Color BgAlt = Color.FromArgb(245, 245, 247);
+        private static readonly Color TextPrimary = Color.FromArgb(29, 29, 31);
+        private static readonly Color TextMuted = Color.FromArgb(110, 110, 115);
+        private static readonly Color Accent = Color.FromArgb(0, 113, 227);
+        private static readonly Color BorderSubtle = Color.FromArgb(229, 229, 234);
+
+        private readonly CheckBox _chkStartup;
+        private readonly CheckBox _chkDesktop;
+        private readonly ProgressBar _progress;
+        private readonly Button _btnInstall;
+
+        public SetupForm()
+        {
+            Text = "LocalCrypto Setup — CiaoDev™";
+            AutoScaleMode = AutoScaleMode.Dpi;
+            ClientSize = new Size(460, 295);
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            BackColor = BgRoot;
+            ForeColor = TextPrimary;
+            Font = new Font("Segoe UI", 9.5f);
+
+            var lblEyebrow = new Label
+            {
+                Text = "CIAODEV™",
+                Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold),
+                ForeColor = Accent,
+                Location = new Point(28, 22),
+                AutoSize = true
+            };
+
+            var lblTitle = new Label
+            {
+                Text = "Installa LocalCrypto",
+                Font = new Font("Segoe UI", 16f, FontStyle.Bold),
+                ForeColor = TextPrimary,
+                Location = new Point(26, 40),
+                AutoSize = true
+            };
+
+            var lblDesc = new Label
+            {
+                Text = "Cartelle cifrate AES-256-GCM e disco locale privato non condiviso in rete.",
+                ForeColor = TextMuted,
+                Location = new Point(28, 74),
+                Size = new Size(404, 36)
+            };
+
+            var optionsPanel = new Panel
+            {
+                Location = new Point(28, 118),
+                Size = new Size(404, 76),
+                BackColor = BgAlt
+            };
+            optionsPanel.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var path = RoundRect(new Rectangle(0, 0, optionsPanel.Width - 1, optionsPanel.Height - 1), 16);
+                using var pen = new Pen(BorderSubtle, 1);
+                e.Graphics.DrawPath(pen, path);
+            };
+
+            _chkStartup = new CheckBox
+            {
+                Text = "Avvia automaticamente nella barra delle applicazioni con Windows",
+                Checked = true,
+                ForeColor = TextPrimary,
+                BackColor = BgAlt,
+                Location = new Point(16, 14),
+                AutoSize = true
+            };
+
+            _chkDesktop = new CheckBox
+            {
+                Text = "Crea collegamento sul Desktop",
+                Checked = false,
+                ForeColor = TextPrimary,
+                BackColor = BgAlt,
+                Location = new Point(16, 42),
+                AutoSize = true
+            };
+
+            optionsPanel.Controls.AddRange(new Control[] { _chkStartup, _chkDesktop });
+
+            _progress = new ProgressBar
+            {
+                Location = new Point(28, 206),
+                Size = new Size(404, 6),
+                Style = ProgressBarStyle.Continuous,
+                Visible = false
+            };
+
+            _btnInstall = new Button
+            {
+                Text = "Installa ora",
+                Location = new Point(28, 224),
+                Size = new Size(404, 42),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Accent,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            _btnInstall.FlatAppearance.BorderSize = 0;
+            _btnInstall.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var path = RoundRect(new Rectangle(0, 0, _btnInstall.Width - 1, _btnInstall.Height - 1), 21);
+                _btnInstall.Region = new Region(path);
+            };
+            _btnInstall.Click += async (_, _) => await RunInstallAsync();
+
+            Controls.AddRange(new Control[] { lblEyebrow, lblTitle, lblDesc, optionsPanel, _progress, _btnInstall });
+        }
+
+        private static GraphicsPath RoundRect(Rectangle r, int radius)
+        {
+            int d = radius * 2;
+            var p = new GraphicsPath();
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+
+        private async Task RunInstallAsync()
+        {
+            _btnInstall.Enabled = false;
+            _progress.Visible = true;
+            _progress.Value = 25;
+
+            string installDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CiaoDev", "LocalCrypto");
+            string exePath = Path.Combine(installDir, "LocalCrypto.exe");
+
+            await Task.Run(() =>
+            {
+                foreach (var p in Process.GetProcessesByName("LocalCrypto"))
+                {
+                    try { p.Kill(); p.WaitForExit(2000); } catch { }
+                }
+
+                Directory.CreateDirectory(installDir);
+
+                using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LocalCrypto.exe")!;
+                using var fs = File.Create(exePath);
+                stream.CopyTo(fs);
+            });
+
+            _progress.Value = 70;
+
+            using (var uninstKey = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CiaoDev_LocalCrypto"))
+            {
+                uninstKey.SetValue("DisplayName", "LocalCrypto");
+                uninstKey.SetValue("Publisher", "CiaoDev");
+                uninstKey.SetValue("DisplayVersion", "1.0.0");
+                uninstKey.SetValue("DisplayIcon", exePath);
+                uninstKey.SetValue("InstallLocation", installDir);
+                uninstKey.SetValue("UninstallString", $"powershell -NoProfile -Command \"Stop-Process -Name LocalCrypto -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force '{installDir}'; Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CiaoDev_LocalCrypto' -Force\"");
+            }
+
+            if (_chkStartup.Checked)
+            {
+                using var runKey = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
+                runKey.SetValue("LocalCrypto", $"\"{exePath}\"");
+            }
+
+            CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "LocalCrypto.lnk"), exePath);
+            if (_chkDesktop.Checked)
+                CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "LocalCrypto.lnk"), exePath);
+
+            _progress.Value = 100;
+            Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true });
+            Application.Exit();
+        }
+
+        private static void CreateShortcut(string shortcutPath, string targetExe)
+        {
+            Type shellType = Type.GetTypeFromProgID("WScript.Shell")!;
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            var shortcut = shell.CreateShortcut(shortcutPath);
+            shortcut.TargetPath = targetExe;
+            shortcut.WorkingDirectory = Path.GetDirectoryName(targetExe);
+            shortcut.IconLocation = targetExe + ",0";
+            shortcut.Save();
+        }
+    }
+}
