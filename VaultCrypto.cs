@@ -8,7 +8,7 @@ namespace LocalCrypto
 {
     public class VaultMetadata
     {
-        public string VaultName { get; set; } = "";
+        public string VaultName { get; set; } = "Disco Cifrato";
         public string SaltPasswordB64 { get; set; } = "";
         public string WrappedKeyPasswordB64 { get; set; } = "";
         public string SaltRecoveryB64 { get; set; } = "";
@@ -19,9 +19,24 @@ namespace LocalCrypto
     {
         private const int Iterations = 600_000;
         public const string MetaFileName = ".localcrypto";
+        public const string LockTriggerFileName = "!Blocca Disco.cmd";
 
         public static bool IsVault(string folderPath) =>
             Directory.Exists(folderPath) && File.Exists(Path.Combine(folderPath, MetaFileName));
+
+        public static string GetVaultName(string folderPath)
+        {
+            try
+            {
+                string metaPath = Path.Combine(folderPath, MetaFileName);
+                var meta = JsonSerializer.Deserialize<VaultMetadata>(File.ReadAllText(metaPath));
+                return string.IsNullOrWhiteSpace(meta?.VaultName) ? Path.GetFileName(folderPath) : meta.VaultName;
+            }
+            catch
+            {
+                return Path.GetFileName(folderPath);
+            }
+        }
 
         public static string GenerateRecoveryKey()
         {
@@ -89,7 +104,7 @@ namespace LocalCrypto
             return Convert.FromBase64String(b64);
         }
 
-        public static string CreateVault(string encryptedFolder, string name, string password)
+        public static string CreateVault(string encryptedFolder, string diskName, string password)
         {
             Directory.CreateDirectory(encryptedFolder);
             byte[] masterKey = RandomNumberGenerator.GetBytes(32);
@@ -100,7 +115,7 @@ namespace LocalCrypto
 
             var meta = new VaultMetadata
             {
-                VaultName = name,
+                VaultName = string.IsNullOrWhiteSpace(diskName) ? Path.GetFileName(encryptedFolder) : diskName.Trim(),
                 SaltPasswordB64 = Convert.ToBase64String(saltPwd),
                 WrappedKeyPasswordB64 = Convert.ToBase64String(EncryptBytes(masterKey, DeriveKey(password, saltPwd))),
                 SaltRecoveryB64 = Convert.ToBase64String(saltRec),
@@ -146,9 +161,20 @@ namespace LocalCrypto
             }
         }
 
+        public static void EncryptRelativeDirectory(string plainRoot, string sourcePlainDir, string encryptedRoot, byte[] masterKey)
+        {
+            string relPath = Path.GetRelativePath(plainRoot, sourcePlainDir);
+            if (relPath == ".") return;
+            string encName = ToBase64Url(EncryptBytes(Encoding.UTF8.GetBytes(relPath), masterKey)) + ".lcd";
+            File.WriteAllBytes(Path.Combine(encryptedRoot, encName), Array.Empty<byte>());
+        }
+
         public static void EncryptRelativeFile(string plainRoot, string sourcePlainFile, string encryptedRoot, byte[] masterKey)
         {
             string relPath = Path.GetRelativePath(plainRoot, sourcePlainFile);
+            if (relPath.Equals(LockTriggerFileName, StringComparison.OrdinalIgnoreCase))
+                return;
+
             string encName = ToBase64Url(EncryptBytes(Encoding.UTF8.GetBytes(relPath), masterKey)) + ".lc";
             byte[] plainData = File.ReadAllBytes(sourcePlainFile);
             byte[] encData = EncryptBytes(plainData, masterKey);
@@ -157,19 +183,50 @@ namespace LocalCrypto
 
         public static void EncryptExistingFolderInPlace(string folderRoot, byte[] masterKey)
         {
-            var files = Directory.GetFiles(folderRoot, "*", SearchOption.AllDirectories);
-            foreach (var f in files)
-            {
-                if (Path.GetFileName(f).Equals(MetaFileName, StringComparison.OrdinalIgnoreCase) || f.EndsWith(".lc"))
-                    continue;
+            string stagingRoot = Path.Combine(
+                Path.GetTempPath(),
+                "CiaoDev_LocalCrypto",
+                "encrypt-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingRoot);
 
-                EncryptRelativeFile(folderRoot, f, folderRoot, masterKey);
-                File.Delete(f);
+            var sourceDirs = Directory.GetDirectories(folderRoot, "*", SearchOption.AllDirectories).ToArray();
+            var sourceFiles = Directory.GetFiles(folderRoot, "*", SearchOption.AllDirectories)
+                .Where(f =>
+                {
+                    string name = Path.GetFileName(f);
+                    return !name.Equals(MetaFileName, StringComparison.OrdinalIgnoreCase)
+                        && !name.EndsWith(".lc", StringComparison.OrdinalIgnoreCase)
+                        && !name.EndsWith(".lcd", StringComparison.OrdinalIgnoreCase);
+                })
+                .ToArray();
+
+            try
+            {
+                foreach (var dir in sourceDirs)
+                    EncryptRelativeDirectory(folderRoot, dir, stagingRoot, masterKey);
+
+                foreach (var file in sourceFiles)
+                    EncryptRelativeFile(folderRoot, file, stagingRoot, masterKey);
+
+                foreach (var staged in Directory.GetFiles(stagingRoot))
+                {
+                    string destination = Path.Combine(folderRoot, Path.GetFileName(staged));
+                    File.Move(staged, destination);
+                }
+
+                foreach (var file in sourceFiles)
+                    File.Delete(file);
+
+                foreach (var dir in Directory.GetDirectories(folderRoot))
+                {
+                    if (!dir.EndsWith(".lc", StringComparison.OrdinalIgnoreCase))
+                        Directory.Delete(dir, recursive: true);
+                }
             }
-
-            foreach (var dir in Directory.GetDirectories(folderRoot))
+            finally
             {
-                Directory.Delete(dir, recursive: true);
+                try { if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true); }
+                catch { }
             }
         }
 
@@ -180,14 +237,19 @@ namespace LocalCrypto
             if (!targetRoot.EndsWith(Path.DirectorySeparatorChar))
                 targetRoot += Path.DirectorySeparatorChar;
 
+            foreach (var encDir in Directory.GetFiles(encryptedRoot, "*.lcd"))
+            {
+                string b64Url = Path.GetFileNameWithoutExtension(encDir);
+                string relPath = Encoding.UTF8.GetString(DecryptBytes(FromBase64Url(b64Url), masterKey));
+                string destPath = GetSafeDestinationPath(targetRoot, relPath);
+                Directory.CreateDirectory(destPath);
+            }
+
             foreach (var encFile in Directory.GetFiles(encryptedRoot, "*.lc"))
             {
                 string b64Url = Path.GetFileNameWithoutExtension(encFile);
                 string relPath = Encoding.UTF8.GetString(DecryptBytes(FromBase64Url(b64Url), masterKey));
-                string destPath = Path.Combine(plainTargetRoot, relPath);
-                destPath = Path.GetFullPath(destPath);
-                if (!destPath.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase))
-                    throw new CryptographicException("Percorso di file cifrato non valido.");
+                string destPath = GetSafeDestinationPath(targetRoot, relPath);
 
                 string? destDir = Path.GetDirectoryName(destPath);
                 if (!string.IsNullOrEmpty(destDir))
@@ -196,6 +258,23 @@ namespace LocalCrypto
                 byte[] plainData = DecryptBytes(File.ReadAllBytes(encFile), masterKey);
                 File.WriteAllBytes(destPath, plainData);
             }
+        }
+
+        private static string GetSafeDestinationPath(string targetRoot, string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath)
+                || Path.IsPathRooted(relativePath)
+                || relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .Any(part => part.Equals("..", StringComparison.Ordinal)))
+            {
+                throw new CryptographicException("Percorso cifrato non valido.");
+            }
+
+            string destPath = Path.GetFullPath(Path.Combine(targetRoot, relativePath));
+            if (!destPath.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase))
+                throw new CryptographicException("Percorso cifrato non valido.");
+
+            return destPath;
         }
     }
 }

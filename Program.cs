@@ -3,128 +3,168 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Printing;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
-using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace LocalCrypto
 {
     internal static class Program
     {
+        private const string PipeName = "CiaoDev_LocalCrypto_ControlPipe";
+        private static Mutex? _singleInstanceMutex;
+
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
+            bool isLockCommand = args.Any(a => a.Equals("--lock", StringComparison.OrdinalIgnoreCase));
+
+            _singleInstanceMutex = new Mutex(true, "Local\\CiaoDev_LocalCrypto_SingleInstance", out bool createdNew);
+
+            if (!createdNew)
+            {
+                SendIpcCommand(isLockCommand ? "LOCK" : "SHOW");
+                return;
+            }
+
+            if (isLockCommand)
+                return;
+
             ApplicationConfiguration.Initialize();
-            Application.Run(new LocalCryptoTrayApp());
+            Application.Run(new MainForm(PipeName));
+            GC.KeepAlive(_singleInstanceMutex);
         }
-    }
 
-    public sealed class LocalCryptoTrayApp : ApplicationContext
-    {
-        private readonly NotifyIcon _trayIcon;
-        private readonly CiaoDevPopupForm _popup;
-
-        public LocalCryptoTrayApp()
+        private static void SendIpcCommand(string command)
         {
-            _popup = new CiaoDevPopupForm();
-
-            _trayIcon = new NotifyIcon
+            try
             {
-                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield,
-                Text = "LocalCrypto - CiaoDev™",
-                Visible = true
-            };
-
-            _trayIcon.MouseClick += (_, e) =>
-            {
-                if (e.Button == MouseButtons.Left)
-                    _popup.ToggleNearTray();
-            };
-
-            var menu = new ContextMenuStrip
-            {
-                BackColor = Color.White,
-                ForeColor = Color.FromArgb(29, 29, 31),
-                ShowImageMargin = false
-            };
-            menu.Items.Add("Apri LocalCrypto", null, (_, _) => _popup.ToggleNearTray());
-            menu.Items.Add("Blocca tutto ed esci", null, (_, _) =>
-            {
-                _popup.LockAndUnmount();
-                _trayIcon.Visible = false;
-                Application.Exit();
-            });
-            _trayIcon.ContextMenuStrip = menu;
+                using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+                client.Connect(1200);
+                using var writer = new StreamWriter(client) { AutoFlush = true };
+                writer.WriteLine(command);
+            }
+            catch { }
         }
     }
 
-    public sealed class CiaoDevPopupForm : Form
+    public sealed class MainForm : Form
     {
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
-
-        // Palette ufficiale CiaoDev™ (style.css)
+        // Palette ufficiale CiaoDev™
         private static readonly Color BgRoot = Color.White;
-        private static readonly Color BgAlt = Color.FromArgb(245, 245, 247);      // --bg-alt: #f5f5f7
-        private static readonly Color TextPrimary = Color.FromArgb(29, 29, 31);     // --text: #1d1d1f
-        private static readonly Color TextMuted = Color.FromArgb(110, 110, 115);    // --text-muted: #6e6e73
-        private static readonly Color Accent = Color.FromArgb(0, 113, 227);         // --accent: #0071e3
-        private static readonly Color AccentHover = Color.FromArgb(0, 119, 237);    // --accent-hover: #0077ed
-        private static readonly Color BorderSubtle = Color.FromArgb(229, 229, 234); // --border: #e5e5ea
+        private static readonly Color BgAlt = Color.FromArgb(245, 245, 247);      // #f5f5f7
+        private static readonly Color TextPrimary = Color.FromArgb(29, 29, 31);     // #1d1d1f
+        private static readonly Color TextMuted = Color.FromArgb(110, 110, 115);    // #6e6e73
+        private static readonly Color Accent = Color.FromArgb(0, 113, 227);         // #0071e3
+        private static readonly Color AccentHover = Color.FromArgb(0, 119, 237);    // #0077ed
+        private static readonly Color BorderSubtle = Color.FromArgb(229, 229, 234); // #e5e5ea
+        private static readonly Color DangerRed = Color.FromArgb(220, 38, 38);
+        private static readonly Color DangerRedHover = Color.FromArgb(185, 28, 28);
+        private static readonly Color SuccessGreen = Color.FromArgb(22, 163, 74);
 
         private MountedVault? _activeVault;
         private string _selectedFolder = "";
         private int _driveIndex = 0;
         private readonly string[] _drives = { "V:", "W:", "X:", "Y:", "Z:" };
+        private bool _forceExit = false;
 
-        private readonly Label _lblStatus;
-        private readonly Label _lblFolderPath;
+        private readonly NotifyIcon _trayIcon;
+        private readonly Label _lblFolderName;
+        private readonly Label _lblFolderFullPath;
+        private readonly PillBadge _badgeFolderState;
+        private readonly Label _lblMountStatus;
+        private readonly PillButton _btnOpenDrive;
+        private readonly PillButton _btnUnmount;
+
+        private readonly TextBox _txtDiskName;
         private readonly TextBox _txtSecret;
         private readonly CheckBox _chkRecovery;
         private readonly PillButton _btnDrive;
+        private readonly PillButton _btnPrimaryAction;
+        private readonly PillButton _btnSecondaryAction;
 
-        public CiaoDevPopupForm()
+        public MainForm(string pipeName)
         {
-            FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false;
-            TopMost = true;
+            Text = "LocalCrypto — CiaoDev™";
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield;
             AutoScaleMode = AutoScaleMode.Dpi;
+            ClientSize = new Size(800, 545);
+            MinimumSize = new Size(760, 520);
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
             BackColor = BgRoot;
             ForeColor = TextPrimary;
             Font = new Font("Segoe UI", 9.5f);
-            Padding = new Padding(22);
-            MinimumSize = new Size(420, 440);
-            AutoSize = true;
-            AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
-            Deactivate += (_, _) =>
+            StartIpcListener(pipeName);
+
+            // System Tray
+            _trayIcon = new NotifyIcon
             {
-                if (!Modal) Hide();
+                Icon = Icon,
+                Text = "LocalCrypto — CiaoDev™",
+                Visible = true
+            };
+            _trayIcon.DoubleClick += (_, _) => RestoreWindow();
+
+            var trayMenu = new ContextMenuStrip
+            {
+                BackColor = BgRoot,
+                ForeColor = TextPrimary,
+                ShowImageMargin = false
+            };
+            trayMenu.Items.Add("Apri LocalCrypto", null, (_, _) => RestoreWindow());
+            trayMenu.Items.Add("Blocca e cifra disco attivo", null, (_, _) => LockAndUnmount());
+            trayMenu.Items.Add("Esci completamente", null, (_, _) =>
+            {
+                _forceExit = true;
+                LockAndUnmount();
+                _trayIcon.Visible = false;
+                Application.Exit();
+            });
+            _trayIcon.ContextMenuStrip = trayMenu;
+
+            FormClosing += (_, e) =>
+            {
+                if (!_forceExit && e.CloseReason == CloseReason.UserClosing)
+                {
+                    e.Cancel = true;
+                    Hide();
+                    if (_activeVault != null)
+                    {
+                        _trayIcon.ShowBalloonTip(
+                            2500,
+                            "LocalCrypto in esecuzione",
+                            $"Il disco \"{_activeVault.DiskName}\" ({_activeVault.DriveLetter}) resta attivo. Doppio clic su !Blocca Disco.cmd nel disco per bloccarlo.",
+                            ToolTipIcon.Info);
+                    }
+                }
             };
 
-            Paint += (_, e) =>
-            {
-                using var pen = new Pen(BorderSubtle, 1);
-                e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
-            };
-
-            var root = new TableLayoutPanel
+            // Layout principale
+            var outer = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                RowCount = 3,
+                Padding = new Padding(28, 22, 28, 20),
                 BackColor = BgRoot
             };
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            // 1. Header con logo e marchio CiaoDev™
+            // --- HEADER ---
             var header = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 3,
                 AutoSize = true,
-                Margin = new Padding(0, 0, 0, 4)
+                Margin = new Padding(0, 0, 0, 20)
             };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -132,139 +172,287 @@ namespace LocalCrypto
 
             var picLogo = new PictureBox
             {
-                Size = new Size(28, 28),
+                Size = new Size(42, 42),
                 SizeMode = PictureBoxSizeMode.Zoom,
-                Image = (Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield).ToBitmap(),
-                Margin = new Padding(0, 0, 10, 0),
+                Image = Icon.ToBitmap(),
+                Margin = new Padding(0, 0, 14, 0),
                 Anchor = AnchorStyles.Left
             };
 
-            var lblTitle = new Label
+            var titleStack = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                AutoSize = true,
+                WrapContents = false,
+                Margin = new Padding(0)
+            };
+            titleStack.Controls.Add(new Label
             {
                 Text = "LocalCrypto",
-                Font = new Font("Segoe UI", 13.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 16.5f, FontStyle.Bold),
                 ForeColor = TextPrimary,
                 AutoSize = true,
-                Anchor = AnchorStyles.Left
-            };
-
-            var lblBrand = new PillBadge("CiaoDev™", BgAlt, TextMuted)
+                Margin = new Padding(0)
+            });
+            titleStack.Controls.Add(new Label
             {
-                Anchor = AnchorStyles.Right
-            };
-
-            header.Controls.Add(picLogo, 0, 0);
-            header.Controls.Add(lblTitle, 1, 0);
-            header.Controls.Add(lblBrand, 2, 0);
-            root.Controls.Add(header);
-
-            // 2. Stato attivo
-            _lblStatus = new Label
-            {
-                Text = "Nessuna unita' montata",
+                Text = "Dischi virtuali cifrati AES-256-GCM privi di condivisione di rete",
                 Font = new Font("Segoe UI", 9f),
                 ForeColor = TextMuted,
                 AutoSize = true,
-                Margin = new Padding(0, 2, 0, 16)
-            };
-            root.Controls.Add(_lblStatus);
+                Margin = new Padding(0, 2, 0, 0)
+            });
 
-            // 3. Card Cartella arrotondata (#f5f5f7)
-            var folderCard = new RoundedCardPanel(BgAlt, BorderSubtle, 16)
+            var brandPill = new PillBadge("CiaoDev™", BgAlt, TextMuted)
             {
-                Dock = DockStyle.Top,
-                Height = 44,
-                Padding = new Padding(14, 0, 14, 0),
-                Margin = new Padding(0, 0, 0, 10)
+                Anchor = AnchorStyles.Right | AnchorStyles.Top
             };
 
-            _lblFolderPath = new Label
+            header.Controls.Add(picLogo, 0, 0);
+            header.Controls.Add(titleStack, 1, 0);
+            header.Controls.Add(brandPill, 2, 0);
+            outer.Controls.Add(header, 0, 0);
+
+            // --- CORPO A 2 COLONNE ---
+            var grid = new TableLayoutPanel
             {
-                Text = "Seleziona una cartella su Drive o locale...",
                 Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = TextMuted,
-                BackColor = Color.Transparent,
-                AutoEllipsis = true
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0)
             };
-            folderCard.Controls.Add(_lblFolderPath);
-            root.Controls.Add(folderCard);
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
 
-            // 4. Pulsanti a pillola Scegli / Cifra
-            var folderActions = new TableLayoutPanel
+            // COLONNA SINISTRA: Cartella & Disco attivo
+            var leftCard = new RoundedCardPanel(BgAlt, BorderSubtle, 22)
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(22),
+                Margin = new Padding(0, 0, 10, 0)
+            };
+
+            var leftLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                BackColor = Color.Transparent
+            };
+            leftLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            var leftHeaderRow = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            leftHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            leftHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            leftHeaderRow.Controls.Add(new Label
+            {
+                Text = "1. Cartella di origine",
+                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
+                ForeColor = TextPrimary,
+                AutoSize = true
+            }, 0, 0);
+
+            _badgeFolderState = new PillBadge("Nessuna", BgRoot, TextMuted);
+            leftHeaderRow.Controls.Add(_badgeFolderState, 1, 0);
+            leftLayout.Controls.Add(leftHeaderRow);
+
+            var pathBox = new RoundedCardPanel(BgRoot, BorderSubtle, 16)
+            {
+                Dock = DockStyle.Top,
+                Height = 66,
+                Padding = new Padding(14, 10, 14, 10),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            var pathInner = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                BackColor = BgRoot
+            };
+            _lblFolderName = new Label
+            {
+                Text = "Nessuna cartella selezionata",
+                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold),
+                ForeColor = TextPrimary,
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true
+            };
+            _lblFolderFullPath = new Label
+            {
+                Text = "Scegli una cartella su Google Drive o disco locale",
+                Font = new Font("Segoe UI", 8.2f),
+                ForeColor = TextMuted,
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true
+            };
+            pathInner.Controls.Add(_lblFolderName, 0, 0);
+            pathInner.Controls.Add(_lblFolderFullPath, 0, 1);
+            pathBox.Controls.Add(pathInner);
+            leftLayout.Controls.Add(pathBox);
+
+            var btnSelectFolder = new PillButton("Scegli cartella...", BgRoot, Accent, Accent, Accent, Color.White)
+            {
+                Dock = DockStyle.Top,
                 Height = 40,
-                Margin = new Padding(0, 0, 0, 16)
+                Margin = new Padding(0, 0, 0, 22)
             };
-            folderActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
-            folderActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            btnSelectFolder.Click += (_, _) => PickFolder();
+            leftLayout.Controls.Add(btnSelectFolder);
 
-            var btnBrowse = new PillButton("Scegli cartella", BgRoot, Accent, Accent, Accent, Color.White)
+            // Sezione Controllo Disco Montato
+            leftLayout.Controls.Add(new Label
+            {
+                Text = "Stato disco montato",
+                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
+                ForeColor = TextPrimary,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 4)
+            });
+
+            _lblMountStatus = new Label
+            {
+                Text = "Nessun disco attivo al momento.",
+                Font = new Font("Segoe UI", 8.8f),
+                ForeColor = TextMuted,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 14)
+            };
+            leftLayout.Controls.Add(_lblMountStatus);
+
+            var activeDriveActions = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 2,
+                Height = 40
+            };
+            activeDriveActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+            activeDriveActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
+
+            _btnOpenDrive = new PillButton("Apri disco", BgRoot, BorderSubtle, TextMuted, BgRoot, TextPrimary)
             {
                 Dock = DockStyle.Fill,
-                Margin = new Padding(0, 0, 6, 0)
+                Enabled = false,
+                Margin = new Padding(0, 0, 5, 0)
             };
-            btnBrowse.Click += (_, _) => PickFolder();
+            _btnOpenDrive.Click += (_, _) =>
+            {
+                if (_activeVault != null)
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_activeVault.DriveLetter + "\\") { UseShellExecute = true });
+            };
 
-            var btnEncrypt = new PillButton("Crea / Cifra", BgRoot, BorderSubtle, TextPrimary, BgAlt, TextPrimary)
+            _btnUnmount = new PillButton("Blocca e cifra ora", DangerRed, DangerRed, Color.White, DangerRedHover, Color.White)
             {
                 Dock = DockStyle.Fill,
-                Margin = new Padding(6, 0, 0, 0)
+                Enabled = false,
+                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+                Margin = new Padding(5, 0, 0, 0)
             };
-            btnEncrypt.Click += (_, _) => InitializeOrEncryptFolder();
+            _btnUnmount.Click += (_, _) => LockAndUnmount();
 
-            folderActions.Controls.Add(btnBrowse, 0, 0);
-            folderActions.Controls.Add(btnEncrypt, 1, 0);
-            root.Controls.Add(folderActions);
+            activeDriveActions.Controls.Add(_btnOpenDrive, 0, 0);
+            activeDriveActions.Controls.Add(_btnUnmount, 1, 0);
+            leftLayout.Controls.Add(activeDriveActions);
 
-            // 5. Campo Password a pillola (.search-input style)
-            var pwdCard = new RoundedCardPanel(BgAlt, BorderSubtle, 20)
+            leftCard.Controls.Add(leftLayout);
+            grid.Controls.Add(leftCard, 0, 0);
+
+            // COLONNA DESTRA: Nome disco, Chiave & Azioni
+            var rightCard = new RoundedCardPanel(BgAlt, BorderSubtle, 22)
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(22),
+                Margin = new Padding(10, 0, 0, 0)
+            };
+
+            var rightLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                BackColor = Color.Transparent
+            };
+            rightLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            rightLayout.Controls.Add(new Label
+            {
+                Text = "2. Configurazione e accesso",
+                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
+                ForeColor = TextPrimary,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 12)
+            });
+
+            // Input Nome Disco
+            var nameBox = new RoundedCardPanel(BgRoot, BorderSubtle, 18)
             {
                 Dock = DockStyle.Top,
                 Height = 42,
                 Padding = new Padding(16, 10, 16, 8),
                 Margin = new Padding(0, 0, 0, 10)
             };
-
-            _txtSecret = new TextBox
+            _txtDiskName = new TextBox
             {
-                PlaceholderText = "Password cartella",
-                UseSystemPasswordChar = true,
-                BackColor = BgAlt,
+                PlaceholderText = "Nome disco (es. Archivio Personale)",
+                BackColor = BgRoot,
                 ForeColor = TextPrimary,
                 BorderStyle = BorderStyle.None,
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 10f)
+                Font = new Font("Segoe UI", 9.8f)
             };
-            pwdCard.Controls.Add(_txtSecret);
-            root.Controls.Add(pwdCard);
+            nameBox.Controls.Add(_txtDiskName);
+            rightLayout.Controls.Add(nameBox);
 
-            // 6. Riga Recovery Key + Reimposta password
-            var recoveryRow = new TableLayoutPanel
+            // Input Password
+            var pwdBox = new RoundedCardPanel(BgRoot, BorderSubtle, 18)
+            {
+                Dock = DockStyle.Top,
+                Height = 42,
+                Padding = new Padding(16, 10, 16, 8),
+                Margin = new Padding(0, 0, 0, 10)
+            };
+            _txtSecret = new TextBox
+            {
+                PlaceholderText = "Password disco (min. 6 caratteri)",
+                UseSystemPasswordChar = true,
+                BackColor = BgRoot,
+                ForeColor = TextPrimary,
+                BorderStyle = BorderStyle.None,
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 9.8f)
+            };
+            pwdBox.Controls.Add(_txtSecret);
+            rightLayout.Controls.Add(pwdBox);
+
+            // Checkbox recovery + Reset password
+            var recRow = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
                 AutoSize = true,
                 Margin = new Padding(2, 0, 2, 16)
             };
-            recoveryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            recoveryRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            recRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            recRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
             _chkRecovery = new CheckBox
             {
                 Text = "Usa chiave di recupero",
                 ForeColor = TextMuted,
-                AutoSize = true,
-                Anchor = AnchorStyles.Left
+                BackColor = BgAlt,
+                AutoSize = true
             };
             _chkRecovery.CheckedChanged += (_, _) =>
             {
                 _txtSecret.UseSystemPasswordChar = !_chkRecovery.Checked;
                 _txtSecret.PlaceholderText = _chkRecovery.Checked
                     ? "XXXXXX-XXXXXX-XXXXXX-..."
-                    : "Password cartella";
+                    : "Password disco (min. 6 caratteri)";
             };
 
             var lnkReset = new LinkLabel
@@ -273,28 +461,28 @@ namespace LocalCrypto
                 LinkColor = Accent,
                 ActiveLinkColor = AccentHover,
                 LinkBehavior = LinkBehavior.HoverUnderline,
+                BackColor = BgAlt,
                 AutoSize = true,
-                Anchor = AnchorStyles.Right,
-                Margin = new Padding(12, 2, 0, 0)
+                Margin = new Padding(8, 2, 0, 0)
             };
             lnkReset.LinkClicked += (_, _) => ResetPasswordFlow();
 
-            recoveryRow.Controls.Add(_chkRecovery, 0, 0);
-            recoveryRow.Controls.Add(lnkReset, 1, 0);
-            root.Controls.Add(recoveryRow);
+            recRow.Controls.Add(_chkRecovery, 0, 0);
+            recRow.Controls.Add(lnkReset, 1, 0);
+            rightLayout.Controls.Add(recRow);
 
-            // 7. Selettore unita' a pillola + CTA Primaria (#0071e3)
-            var mountRow = new TableLayoutPanel
+            // Riga lettera + Sblocca
+            var driveSelectRow = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
                 Height = 42,
                 Margin = new Padding(0, 0, 0, 10)
             };
-            mountRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96f));
-            mountRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            driveSelectRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102f));
+            driveSelectRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
 
-            _btnDrive = new PillButton("Unita' V:", BgAlt, BorderSubtle, TextPrimary, BorderSubtle, TextPrimary)
+            _btnDrive = new PillButton("Unita' V:", BgRoot, BorderSubtle, TextPrimary, BorderSubtle, TextPrimary)
             {
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0, 0, 8, 0)
@@ -305,59 +493,80 @@ namespace LocalCrypto
                 _btnDrive.Text = $"Unita' {_drives[_driveIndex]}";
             };
 
-            var btnMount = new PillButton("Sblocca e monta disco", Accent, Accent, Color.White, AccentHover, Color.White)
+            _btnPrimaryAction = new PillButton("Sblocca e monta disco", Accent, Accent, Color.White, AccentHover, Color.White)
             {
                 Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold)
             };
-            btnMount.Click += (_, _) => UnlockAndMount();
+            _btnPrimaryAction.Click += (_, _) => UnlockAndMount();
 
-            mountRow.Controls.Add(_btnDrive, 0, 0);
-            mountRow.Controls.Add(btnMount, 1, 0);
-            root.Controls.Add(mountRow);
+            driveSelectRow.Controls.Add(_btnDrive, 0, 0);
+            driveSelectRow.Controls.Add(_btnPrimaryAction, 1, 0);
+            rightLayout.Controls.Add(driveSelectRow);
 
-            // 8. Bottone secondario Blocca e smonta
-            var btnLock = new PillButton("Blocca e smonta unita' attiva", BgRoot, BorderSubtle, TextMuted, BgAlt, TextPrimary)
+            // Bottone Crea / Cifra
+            _btnSecondaryAction = new PillButton("Crea / Cifra cartella selezionata", BgRoot, Accent, Accent, Accent, Color.White)
             {
                 Dock = DockStyle.Top,
-                Height = 38,
-                Margin = new Padding(0, 0, 0, 14)
+                Height = 40
             };
-            btnLock.Click += (_, _) => LockAndUnmount();
-            root.Controls.Add(btnLock);
+            _btnSecondaryAction.Click += (_, _) => InitializeOrEncryptFolder();
+            rightLayout.Controls.Add(_btnSecondaryAction);
 
-            // 9. Footer minimale
-            var lblFooter = new Label
+            rightCard.Controls.Add(rightLayout);
+            grid.Controls.Add(rightCard, 1, 0);
+
+            outer.Controls.Add(grid, 0, 1);
+
+            // --- FOOTER ---
+            var footer = new Label
             {
-                Text = "Disco locale privato non condiviso in rete  •  CiaoDev™",
+                Text = "CiaoDev™  •  Nel disco montato trovi sempre \"!Blocca Disco.cmd\" in cima: doppio clic per bloccarlo e cifrarlo all'istante",
                 Font = new Font("Segoe UI", 8.2f),
                 ForeColor = TextMuted,
-                AutoSize = true
+                AutoSize = true,
+                Margin = new Padding(0, 14, 0, 0)
             };
-            root.Controls.Add(lblFooter);
+            outer.Controls.Add(footer, 0, 2);
 
-            Controls.Add(root);
+            Controls.Add(outer);
         }
 
-        protected override void OnHandleCreated(EventArgs e)
+        private void StartIpcListener(string pipeName)
         {
-            base.OnHandleCreated(e);
-            int cornerPreference = 2; // DWMWCP_ROUND su Windows 11
-            DwmSetWindowAttribute(Handle, 33, ref cornerPreference, sizeof(int));
-        }
-
-        public void ToggleNearTray()
-        {
-            if (Visible)
+            Task.Run(async () =>
             {
-                Hide();
-                return;
-            }
+                while (true)
+                {
+                    try
+                    {
+                        using var server = new NamedPipeServerStream(pipeName, PipeDirection.In);
+                        await server.WaitForConnectionAsync();
+                        using var reader = new StreamReader(server);
+                        string? cmd = await reader.ReadLineAsync();
 
-            PerformLayout();
-            var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-            Location = new Point(area.Right - Width - 16, area.Bottom - Height - 16);
+                        if (cmd == "LOCK")
+                        {
+                            BeginInvoke(() => LockAndUnmount(notifyLocked: true));
+                        }
+                        else if (cmd == "SHOW")
+                        {
+                            BeginInvoke(RestoreWindow);
+                        }
+                    }
+                    catch
+                    {
+                        await Task.Delay(200);
+                    }
+                }
+            });
+        }
+
+        private void RestoreWindow()
+        {
             Show();
+            WindowState = FormWindowState.Normal;
+            BringToFront();
             Activate();
         }
 
@@ -372,9 +581,33 @@ namespace LocalCrypto
             if (dlg.ShowDialog() == DialogResult.OK)
             {
                 _selectedFolder = dlg.SelectedPath;
-                bool isVault = VaultCrypto.IsVault(_selectedFolder);
-                _lblFolderPath.Text = (isVault ? "[Cifrata] " : "[In chiaro] ") + _selectedFolder;
-                _lblFolderPath.ForeColor = TextPrimary;
+                RefreshSelectedFolderState();
+            }
+        }
+
+        private void RefreshSelectedFolderState()
+        {
+            if (string.IsNullOrEmpty(_selectedFolder)) return;
+
+            bool isVault = VaultCrypto.IsVault(_selectedFolder);
+            _lblFolderName.Text = Path.GetFileName(_selectedFolder);
+            _lblFolderFullPath.Text = _selectedFolder;
+
+            if (isVault)
+            {
+                string savedName = VaultCrypto.GetVaultName(_selectedFolder);
+                _txtDiskName.Text = savedName;
+                _badgeFolderState.SetState("Cifrata", Color.FromArgb(219, 234, 254), Accent);
+                _btnPrimaryAction.Enabled = true;
+                _btnSecondaryAction.Enabled = false;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(_txtDiskName.Text))
+                    _txtDiskName.Text = Path.GetFileName(_selectedFolder);
+                _badgeFolderState.SetState("In chiaro", Color.FromArgb(254, 243, 199), Color.FromArgb(180, 83, 9));
+                _btnPrimaryAction.Enabled = false;
+                _btnSecondaryAction.Enabled = true;
             }
         }
 
@@ -382,7 +615,7 @@ namespace LocalCrypto
         {
             if (string.IsNullOrEmpty(_selectedFolder))
             {
-                MessageBox.Show("Seleziona prima una cartella.", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Seleziona prima una cartella nella colonna di sinistra.", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -398,71 +631,146 @@ namespace LocalCrypto
                 return;
             }
 
-            bool hasFiles = Directory.EnumerateFileSystemEntries(_selectedFolder).Any();
-            if (hasFiles)
+            bool hasItems = Directory.EnumerateFileSystemEntries(_selectedFolder).Any();
+            if (hasItems)
             {
                 var confirm = MessageBox.Show(
-                    "La cartella contiene gia' file o sottocartelle.\nVerranno cifrati sul posto e i file originali in chiaro saranno rimossi.\n\nContinuare?",
-                    "LocalCrypto - Cifratura cartella esistente",
+                    "La cartella contiene gia' file o sottocartelle.\nVerranno cifrati sul posto e gli originali in chiaro saranno rimossi.\n\nContinuare?",
+                    "LocalCrypto — Cifratura cartella esistente",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Question);
 
                 if (confirm != DialogResult.Yes) return;
             }
 
+            string diskName = string.IsNullOrWhiteSpace(_txtDiskName.Text)
+                ? Path.GetFileName(_selectedFolder)
+                : _txtDiskName.Text.Trim();
+
             string password = _txtSecret.Text;
-            string recoveryKey = VaultCrypto.CreateVault(_selectedFolder, Path.GetFileName(_selectedFolder), password);
-
-            if (hasFiles)
+            try
             {
-                byte[] mk = VaultCrypto.UnlockMasterKey(_selectedFolder, password, isRecoveryKey: false);
-                try
-                {
-                    VaultCrypto.EncryptExistingFolderInPlace(_selectedFolder, mk);
-                }
-                finally
-                {
-                    Array.Clear(mk, 0, mk.Length);
-                }
-            }
+                string recoveryKey = VaultCrypto.CreateVault(_selectedFolder, diskName, password);
 
-            _lblFolderPath.Text = "[Cifrata] " + _selectedFolder;
-            _txtSecret.Clear();
-            ShowRecoveryKeyOptions(recoveryKey);
+                if (hasItems)
+                {
+                    byte[] mk = VaultCrypto.UnlockMasterKey(_selectedFolder, password, isRecoveryKey: false);
+                    try
+                    {
+                        VaultCrypto.EncryptExistingFolderInPlace(_selectedFolder, mk);
+                    }
+                    finally
+                    {
+                        Array.Clear(mk, 0, mk.Length);
+                    }
+                }
+
+                _txtSecret.Clear();
+                RefreshSelectedFolderState();
+                ShowRecoveryKeyDialog(recoveryKey, diskName);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Impossibile creare o cifrare la cartella:\n{ex.Message}", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
-        private void ShowRecoveryKeyOptions(string recoveryKey)
+        private void ShowRecoveryKeyDialog(string recoveryKey, string diskName)
         {
             string sheet =
-                "====================================================\r\n" +
-                "  LOCALCRYPTO - CHIAVE DI RECUPERO (CiaoDev™)\r\n" +
-                "====================================================\r\n" +
+                "LOCALCRYPTO — CHIAVE DI RECUPERO (CiaoDev™)\r\n" +
+                $"Disco    : {diskName}\r\n" +
                 $"Cartella : {_selectedFolder}\r\n" +
                 $"Creata il: {DateTime.Now:dd/MM/yyyy HH:mm}\r\n\r\n" +
-                "CHIAVE DI RECUPERO:\r\n" +
-                $"{recoveryKey}\r\n\r\n" +
+                $"CHIAVE DI RECUPERO:\r\n{recoveryKey}\r\n\r\n" +
                 "Conserva questa chiave in un luogo sicuro.\r\n" +
-                "Senza password o chiave di recupero i dati non sono recuperabili.\r\n" +
-                "====================================================";
+                "Senza password o chiave di recupero i dati non sono recuperabili.";
 
-            var choice = MessageBox.Show(
-                sheet + "\n\n[Si] Salva su file (.txt)\n[No] Stampa documento\n[Annulla] Chiudi",
-                "LocalCrypto - Chiave di recupero",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Information);
+            using var dlg = new Form
+            {
+                Text = "Chiave di recupero — LocalCrypto",
+                AutoScaleMode = AutoScaleMode.Dpi,
+                ClientSize = new Size(470, 265),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                BackColor = BgRoot,
+                ForeColor = TextPrimary,
+                Font = new Font("Segoe UI", 9.5f)
+            };
 
-            if (choice == DialogResult.Yes)
+            dlg.Controls.Add(new Label
+            {
+                Text = "Salva la tua chiave di recupero",
+                Font = new Font("Segoe UI", 13.5f, FontStyle.Bold),
+                Location = new Point(24, 20),
+                AutoSize = true
+            });
+
+            dlg.Controls.Add(new Label
+            {
+                Text = "Serve per sbloccare il disco se dimentichi la password principale.",
+                ForeColor = TextMuted,
+                Location = new Point(24, 48),
+                AutoSize = true
+            });
+
+            var keyCard = new RoundedCardPanel(BgAlt, BorderSubtle, 16)
+            {
+                Location = new Point(24, 80),
+                Size = new Size(422, 48),
+                Padding = new Padding(12, 12, 12, 10)
+            };
+
+            var txtKey = new TextBox
+            {
+                Text = recoveryKey,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = BgAlt,
+                ForeColor = TextPrimary,
+                Font = new Font("Consolas", 10.5f, FontStyle.Bold),
+                TextAlign = HorizontalAlignment.Center,
+                Dock = DockStyle.Fill
+            };
+            keyCard.Controls.Add(txtKey);
+            dlg.Controls.Add(keyCard);
+
+            var btnCopy = new PillButton("Copia", BgAlt, BorderSubtle, TextPrimary, BorderSubtle, TextPrimary)
+            {
+                Location = new Point(24, 146),
+                Size = new Size(132, 38)
+            };
+            btnCopy.Click += (_, _) =>
+            {
+                Clipboard.SetText(recoveryKey);
+                btnCopy.Text = "Copiata";
+            };
+
+            var btnSave = new PillButton("Salva .txt", Accent, Accent, Color.White, AccentHover, Color.White)
+            {
+                Location = new Point(168, 146),
+                Size = new Size(138, 38)
+            };
+            btnSave.Click += (_, _) =>
             {
                 using var sfd = new SaveFileDialog
                 {
                     Title = "Salva chiave di recupero",
                     Filter = "File di testo (*.txt)|*.txt",
-                    FileName = $"LocalCrypto_Recovery_{Path.GetFileName(_selectedFolder)}.txt"
+                    FileName = $"LocalCrypto_Recovery_{diskName}.txt"
                 };
                 if (sfd.ShowDialog() == DialogResult.OK)
                     File.WriteAllText(sfd.FileName, sheet);
-            }
-            else if (choice == DialogResult.No)
+            };
+
+            var btnPrint = new PillButton("Stampa", BgRoot, Accent, Accent, Accent, Color.White)
+            {
+                Location = new Point(318, 146),
+                Size = new Size(128, 38)
+            };
+            btnPrint.Click += (_, _) =>
             {
                 using var pd = new PrintDocument();
                 pd.DocumentName = "LocalCrypto Recovery Key";
@@ -474,7 +782,17 @@ namespace LocalCrypto
                 using var printDlg = new PrintDialog { Document = pd };
                 if (printDlg.ShowDialog() == DialogResult.OK)
                     pd.Print();
-            }
+            };
+
+            var btnDone = new PillButton("Ho salvato la chiave, chiudi", BgRoot, BorderSubtle, TextMuted, BgAlt, TextPrimary)
+            {
+                Location = new Point(24, 200),
+                Size = new Size(422, 38),
+                DialogResult = DialogResult.OK
+            };
+
+            dlg.Controls.AddRange(new Control[] { btnCopy, btnSave, btnPrint, btnDone });
+            dlg.ShowDialog(this);
         }
 
         private void UnlockAndMount()
@@ -495,16 +813,36 @@ namespace LocalCrypto
             {
                 LockAndUnmount();
                 byte[] mk = VaultCrypto.UnlockMasterKey(_selectedFolder, _txtSecret.Text, _chkRecovery.Checked);
-                string drive = _drives[_driveIndex];
+                try
+                {
+                    string drive = _drives[_driveIndex];
+                    string diskName = string.IsNullOrWhiteSpace(_txtDiskName.Text)
+                        ? VaultCrypto.GetVaultName(_selectedFolder)
+                        : _txtDiskName.Text.Trim();
 
-                _activeVault = new MountedVault(drive, _selectedFolder, mk);
-                _lblStatus.Text = $"Attivo: {drive} -> {Path.GetFileName(_selectedFolder)}";
-                _lblStatus.ForeColor = Accent;
-                _txtSecret.Clear();
+                    _activeVault = new MountedVault(drive, diskName, _selectedFolder, mk);
+                    _lblMountStatus.Text = $"Attivo: {diskName} ({drive})";
+                    _lblMountStatus.ForeColor = SuccessGreen;
+                    _btnOpenDrive.Enabled = true;
+                    _btnUnmount.Enabled = true;
+                    _txtSecret.Clear();
+                }
+                finally
+                {
+                    Array.Clear(mk, 0, mk.Length);
+                }
             }
-            catch
+            catch (CryptographicException)
             {
                 MessageBox.Show("Password o chiave di recupero non valida.", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (IOException ex)
+            {
+                MessageBox.Show($"Impossibile montare il disco:\n{ex.Message}", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Impossibile sbloccare il disco:\n{ex.Message}", "LocalCrypto", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -543,8 +881,9 @@ namespace LocalCrypto
         {
             using var dlg = new Form
             {
-                Text = "LocalCrypto - Nuova password",
-                Size = new Size(360, 175),
+                Text = "Nuova password — LocalCrypto",
+                AutoScaleMode = AutoScaleMode.Dpi,
+                ClientSize = new Size(360, 155),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -553,11 +892,11 @@ namespace LocalCrypto
                 ForeColor = TextPrimary
             };
 
-            var card = new RoundedCardPanel(BgAlt, BorderSubtle, 20)
+            var card = new RoundedCardPanel(BgAlt, BorderSubtle, 18)
             {
-                Location = new Point(20, 20),
-                Size = new Size(304, 42),
-                Padding = new Padding(14, 10, 14, 8)
+                Location = new Point(22, 20),
+                Size = new Size(316, 44),
+                Padding = new Padding(16, 11, 16, 9)
             };
 
             var box = new TextBox
@@ -571,10 +910,10 @@ namespace LocalCrypto
             };
             card.Controls.Add(box);
 
-            var ok = new PillButton("Conferma", Accent, Accent, Color.White, AccentHover, Color.White)
+            var ok = new PillButton("Conferma nuova password", Accent, Accent, Color.White, AccentHover, Color.White)
             {
-                Location = new Point(20, 76),
-                Size = new Size(304, 40),
+                Location = new Point(22, 80),
+                Size = new Size(316, 40),
                 DialogResult = DialogResult.OK
             };
 
@@ -584,12 +923,38 @@ namespace LocalCrypto
             return dlg.ShowDialog() == DialogResult.OK ? box.Text : "";
         }
 
-        public void LockAndUnmount()
+        public void LockAndUnmount(bool notifyLocked = false)
         {
-            _activeVault?.Dispose();
+            if (_activeVault == null) return;
+
+            string lockedName = _activeVault.DiskName;
+            string lockedDrive = _activeVault.DriveLetter;
+
+            _activeVault.Dispose();
+            if (!_activeVault.SyncSucceeded)
+            {
+                MessageBox.Show(
+                    "Sincronizzazione fallita. Il disco resta montato per evitare la perdita di dati. Chiudere le applicazioni che usano i file e riprovare.",
+                    "LocalCrypto",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
             _activeVault = null;
-            _lblStatus.Text = "Nessuna unita' montata";
-            _lblStatus.ForeColor = TextMuted;
+
+            _lblMountStatus.Text = "Nessun disco attivo al momento.";
+            _lblMountStatus.ForeColor = TextMuted;
+            _btnOpenDrive.Enabled = false;
+            _btnUnmount.Enabled = false;
+
+            if (notifyLocked)
+            {
+                _trayIcon.ShowBalloonTip(
+                    2500,
+                    "Disco bloccato e cifrato",
+                    $"\"{lockedName}\" ({lockedDrive}) e' stato cifrato e reso inaccessibile.",
+                    ToolTipIcon.Info);
+            }
         }
     }
 
@@ -622,15 +987,23 @@ namespace LocalCrypto
 
     public sealed class PillBadge : Control
     {
-        private readonly Color _bg;
+        private Color _bg;
         public PillBadge(string text, Color bg, Color fg)
         {
             Text = text;
             _bg = bg;
             ForeColor = fg;
-            Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold);
-            Size = new Size(76, 24);
+            Font = new Font("Segoe UI Semibold", 8.2f, FontStyle.Bold);
+            Size = new Size(84, 24);
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+        }
+
+        public void SetState(string text, Color bg, Color fg)
+        {
+            Text = text;
+            _bg = bg;
+            ForeColor = fg;
+            Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -672,14 +1045,13 @@ namespace LocalCrypto
         protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
         protected override void OnClick(EventArgs e)
         {
+            if (!Enabled) return;
             base.OnClick(e);
             if (DialogResult != DialogResult.None && FindForm() is Form f)
                 f.DialogResult = DialogResult;
         }
 
-        public void NotifyDefault(bool value)
-        {
-        }
+        public void NotifyDefault(bool value) { }
 
         public void PerformClick()
         {
@@ -693,9 +1065,9 @@ namespace LocalCrypto
             var rect = new Rectangle(0, 0, Width - 1, Height - 1);
             using var path = CreateRoundRect(rect, Height / 2);
 
-            Color fill = _hover ? _hoverBg : _bg;
-            Color textCol = _hover ? _hoverFg : _fg;
-            Color borderCol = _hover ? _hoverBg : _border;
+            Color fill = !Enabled ? Color.FromArgb(245, 245, 247) : (_hover ? _hoverBg : _bg);
+            Color textCol = !Enabled ? Color.FromArgb(174, 174, 178) : (_hover ? _hoverFg : _fg);
+            Color borderCol = !Enabled ? Color.FromArgb(229, 229, 234) : (_hover ? _hoverBg : _border);
 
             using var brush = new SolidBrush(fill);
             using var pen = new Pen(borderCol, 1);
