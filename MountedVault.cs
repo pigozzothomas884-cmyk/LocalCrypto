@@ -32,7 +32,8 @@ namespace LocalCrypto
             DriveLetter = driveLetter.TrimEnd('\\');
             DiskName = string.IsNullOrWhiteSpace(diskName) ? "Disco Cifrato" : diskName.Trim();
             EncryptedFolder = encryptedFolder;
-            _masterKey = masterKey;
+            // The caller clears its buffer after construction; retain an owned copy for vault sync.
+            _masterKey = (byte[])masterKey.Clone();
 
             PlainCacheFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

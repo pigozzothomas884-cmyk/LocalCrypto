@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Drawing.Printing;
 using System.IO;
 using System.IO.Pipes;
@@ -53,17 +52,6 @@ namespace LocalCrypto
 
     public sealed class MainForm : Form
     {
-        private static readonly Color BgRoot = Color.White;
-        private static readonly Color BgAlt = Color.FromArgb(245, 245, 247);      // #f5f5f7
-        private static readonly Color TextPrimary = Color.FromArgb(29, 29, 31);     // #1d1d1f
-        private static readonly Color TextMuted = Color.FromArgb(110, 110, 115);    // #6e6e73
-        private static readonly Color Accent = Color.FromArgb(0, 113, 227);         // #0071e3
-        private static readonly Color AccentHover = Color.FromArgb(0, 119, 237);    // #0077ed
-        private static readonly Color BorderSubtle = Color.FromArgb(229, 229, 234); // #e5e5ea
-        private static readonly Color DangerRed = Color.FromArgb(220, 38, 38);
-        private static readonly Color DangerRedHover = Color.FromArgb(185, 28, 28);
-        private static readonly Color SuccessGreen = Color.FromArgb(22, 163, 74);
-
         private MountedVault? _activeVault;
         private string _selectedFolder = "";
         private int _driveIndex = 0;
@@ -73,24 +61,24 @@ namespace LocalCrypto
         private readonly NotifyIcon _trayIcon;
 
         // Sezione disco attivo
-        private readonly RoundedCardPanel _panelActiveDrive;
+        private readonly GroupBox _panelActiveDrive;
         private readonly Label _lblActiveTitle;
         private readonly Label _lblActiveSub;
 
         // Sezione cartella selezionata
-        private readonly RoundedCardPanel _panelFolderCard;
+        private readonly GroupBox _panelFolderCard;
         private readonly Label _lblFolderName;
         private readonly Label _lblFolderFullPath;
-        private readonly PillBadge _badgeFolderState;
+        private readonly Label _badgeFolderState;
 
         // Sezione form contestuale
-        private readonly Panel _panelActionForm;
+        private readonly GroupBox _panelActionForm;
         private readonly TextBox _txtDiskName;
         private readonly TextBox _txtSecret;
-        private readonly Panel _rowMount;
-        private readonly PillButton _btnDrive;
-        private readonly PillButton _btnPrimaryAction;
-        private readonly PillButton _btnSecondaryAction;
+        private readonly TableLayoutPanel _rowMount;
+        private readonly Button _btnDrive;
+        private readonly Button _btnPrimaryAction;
+        private readonly Button _btnSecondaryAction;
         private readonly LinkLabel _lnkRecoveryToggle;
         private readonly LinkLabel _lnkReset;
 
@@ -99,15 +87,13 @@ namespace LocalCrypto
             Text = "LocalCrypto";
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Shield;
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(460, 232);
-            MinimumSize = new Size(460, 232);
+            ClientSize = new Size(600, 620);
+            MinimumSize = new Size(520, 500);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.Sizable;
             WindowState = FormWindowState.Normal;
             ShowInTaskbar = true;
-            BackColor = BgRoot;
-            ForeColor = TextPrimary;
-            Font = new Font("Segoe UI", 9.5f);
+            Font = SystemFonts.MessageBoxFont;
 
             Shown += (_, _) => RestoreWindow();
 
@@ -123,8 +109,6 @@ namespace LocalCrypto
 
             var trayMenu = new ContextMenuStrip
             {
-                BackColor = BgRoot,
-                ForeColor = TextPrimary,
                 ShowImageMargin = false
             };
             trayMenu.Items.Add("Apri", null, (_, _) => RestoreWindow());
@@ -159,247 +143,239 @@ namespace LocalCrypto
                 _trayIcon.Visible = false;
             };
 
-            // --- HEADER ---
-            var picLogo = new PictureBox
+            var scrollPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+            var content = new TableLayoutPanel
             {
-                Size = new Size(34, 34),
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                Padding = new Padding(16)
+            };
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            scrollPanel.Controls.Add(content);
+            Controls.Add(scrollPanel);
+
+            void AddContentRow(Control control)
+            {
+                int row = content.RowCount++;
+                content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                control.Margin = new Padding(0, 0, 0, 12);
+                control.Dock = DockStyle.Top;
+                content.Controls.Add(control, 0, row);
+            }
+
+            var header = new TableLayoutPanel
+            {
+                ColumnCount = 3,
+                RowCount = 1,
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                Margin = new Padding(0, 0, 0, 16)
+            };
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            header.Controls.Add(new PictureBox
+            {
+                Size = new Size(36, 36),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Image = Icon.ToBitmap(),
-                Location = new Point(28, 24)
-            };
-
-            var lblTitle = new Label
+                Margin = new Padding(0, 0, 10, 0)
+            }, 0, 0);
+            header.Controls.Add(new Label
             {
                 Text = "LocalCrypto",
-                Font = new Font("Segoe UI", 16f, FontStyle.Bold),
-                ForeColor = TextPrimary,
-                Location = new Point(72, 24),
-                AutoSize = true
-            };
-
-            var lblBrand = new Label
+                Font = new Font(Font, FontStyle.Bold),
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 1, 0);
+            header.Controls.Add(new Label
             {
                 Text = "CiaoDev",
-                Font = new Font("Segoe UI", 8.5f),
-                ForeColor = TextMuted,
-                Location = new Point(362, 32),
-                Size = new Size(70, 20),
-                TextAlign = ContentAlignment.MiddleRight
-            };
+                AutoSize = true,
+                Anchor = AnchorStyles.Right
+            }, 2, 0);
+            AddContentRow(header);
 
-            Controls.AddRange(new Control[] { picLogo, lblTitle, lblBrand });
-
-            // --- CARD DISCO ATTIVO (visibile solo a disco montato) ---
-            _panelActiveDrive = new RoundedCardPanel(BgAlt, BorderSubtle, 20)
+            _panelActiveDrive = new GroupBox
             {
-                Location = new Point(28, 76),
-                Size = new Size(404, 138),
-                Visible = false
+                Text = "Disco attivo",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Visible = false,
+                Padding = new Padding(10)
             };
-
-            var lblActiveTag = new Label
+            var activeLayout = new TableLayoutPanel
             {
-                Text = "ATTIVO",
-                Font = new Font("Segoe UI Semibold", 7.8f, FontStyle.Bold),
-                ForeColor = SuccessGreen,
-                Location = new Point(20, 16),
-                AutoSize = true
+                ColumnCount = 1,
+                RowCount = 3,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top
             };
-
-            _lblActiveTitle = new Label
+            activeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            for (int i = 0; i < activeLayout.RowCount; i++)
+                activeLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            _lblActiveTitle = new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
+            _lblActiveSub = new Label { AutoSize = true, MaximumSize = new Size(520, 0) };
+            var activeButtons = new FlowLayoutPanel
             {
-                Text = "",
-                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-                ForeColor = TextPrimary,
-                Location = new Point(20, 34),
-                Size = new Size(364, 26),
-                AutoEllipsis = true
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false
             };
-
-            _lblActiveSub = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8.5f),
-                ForeColor = TextMuted,
-                Location = new Point(20, 62),
-                Size = new Size(364, 18),
-                AutoEllipsis = true
-            };
-
-            var btnOpenDrive = new PillButton("Apri disco", BgRoot, BorderSubtle, TextPrimary, BgRoot, Accent)
-            {
-                Location = new Point(20, 88),
-                Size = new Size(174, 36)
-            };
+            var btnOpenDrive = new Button { Text = "Apri disco", AutoSize = true };
             btnOpenDrive.Click += (_, _) =>
             {
                 if (_activeVault != null)
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_activeVault.DriveLetter + "\\") { UseShellExecute = true });
             };
-
-            var btnUnmount = new PillButton("Blocca", DangerRed, DangerRed, Color.White, DangerRedHover, Color.White)
-            {
-                Location = new Point(206, 88),
-                Size = new Size(178, 36),
-                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold)
-            };
+            var btnUnmount = new Button { Text = "Blocca disco", AutoSize = true };
             btnUnmount.Click += (_, _) => LockAndUnmount();
+            activeButtons.Controls.AddRange(new Control[] { btnOpenDrive, btnUnmount });
+            activeLayout.Controls.Add(_lblActiveTitle, 0, 0);
+            activeLayout.Controls.Add(_lblActiveSub, 0, 1);
+            activeLayout.Controls.Add(activeButtons, 0, 2);
+            _panelActiveDrive.Controls.Add(activeLayout);
+            AddContentRow(_panelActiveDrive);
 
-            _panelActiveDrive.Controls.AddRange(new Control[] { lblActiveTag, _lblActiveTitle, _lblActiveSub, btnOpenDrive, btnUnmount });
-            Controls.Add(_panelActiveDrive);
-
-            // --- CARD CARTELLA ---
-            _panelFolderCard = new RoundedCardPanel(BgAlt, BorderSubtle, 20)
+            _panelFolderCard = new GroupBox
             {
-                Location = new Point(28, 76),
-                Size = new Size(404, 126)
+                Text = "Cartella",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(10)
             };
-
+            var folderLayout = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                RowCount = 3,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top
+            };
+            folderLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            folderLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            for (int i = 0; i < folderLayout.RowCount; i++)
+                folderLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             _lblFolderName = new Label
             {
-                Text = "Nessuna cartella",
-                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
-                ForeColor = TextPrimary,
-                Location = new Point(18, 18),
-                Size = new Size(280, 22),
-                AutoEllipsis = true
+                Text = "Nessuna cartella selezionata",
+                AutoSize = true,
+                Font = new Font(Font, FontStyle.Bold),
+                Margin = new Padding(3, 5, 3, 8)
             };
-
-            _badgeFolderState = new PillBadge("", BgRoot, TextMuted)
+            _badgeFolderState = new Label
             {
-                Location = new Point(306, 17),
-                Size = new Size(80, 24),
-                Visible = false
+                Text = "",
+                AutoSize = true,
+                Visible = false,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(3, 5, 3, 8)
             };
-
             _lblFolderFullPath = new Label
             {
                 Text = "Seleziona una cartella locale o su Google Drive",
-                Font = new Font("Segoe UI", 8.5f),
-                ForeColor = TextMuted,
-                Location = new Point(18, 42),
-                Size = new Size(368, 18),
-                AutoEllipsis = true
+                AutoSize = true,
+                MaximumSize = new Size(520, 0),
+                Margin = new Padding(3, 0, 3, 8)
             };
-
-            var btnSelectFolder = new PillButton("Scegli cartella", BgRoot, BorderSubtle, TextPrimary, BgRoot, Accent)
-            {
-                Location = new Point(18, 72),
-                Size = new Size(368, 38)
-            };
+            var btnSelectFolder = new Button { Text = "Scegli cartella...", AutoSize = true };
             btnSelectFolder.Click += (_, _) => PickFolder();
+            folderLayout.Controls.Add(_lblFolderName, 0, 0);
+            folderLayout.Controls.Add(_badgeFolderState, 1, 0);
+            folderLayout.Controls.Add(_lblFolderFullPath, 0, 1);
+            folderLayout.SetColumnSpan(_lblFolderFullPath, 2);
+            folderLayout.Controls.Add(btnSelectFolder, 0, 2);
+            folderLayout.SetColumnSpan(btnSelectFolder, 2);
+            _panelFolderCard.Controls.Add(folderLayout);
+            AddContentRow(_panelFolderCard);
 
-            _panelFolderCard.Controls.AddRange(new Control[] { _lblFolderName, _badgeFolderState, _lblFolderFullPath, btnSelectFolder });
-            Controls.Add(_panelFolderCard);
-
-            // --- FORM CONTESTUALE ---
-            _panelActionForm = new Panel
+            _panelActionForm = new GroupBox
             {
-                Location = new Point(28, 216),
-                Size = new Size(404, 200),
-                BackColor = BgRoot,
-                Visible = false
+                Text = "Configurazione e accesso",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Visible = false,
+                Padding = new Padding(10)
             };
-
-            var nameBox = new RoundedCardPanel(BgAlt, BorderSubtle, 18)
+            var actionLayout = new TableLayoutPanel
             {
-                Location = new Point(0, 0),
-                Size = new Size(404, 42),
-                Padding = new Padding(16, 10, 16, 8)
+                ColumnCount = 1,
+                RowCount = 7,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top
             };
+            actionLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            for (int i = 0; i < actionLayout.RowCount; i++)
+                actionLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            actionLayout.Controls.Add(new Label { Text = "Nome del disco", AutoSize = true }, 0, 0);
             _txtDiskName = new TextBox
             {
-                PlaceholderText = "Nome del disco",
-                BackColor = BgAlt,
-                ForeColor = TextPrimary,
-                BorderStyle = BorderStyle.None,
-                Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9.8f)
+                Dock = DockStyle.Top,
+                Margin = new Padding(3, 3, 3, 10)
             };
-            nameBox.Controls.Add(_txtDiskName);
-
-            var pwdBox = new RoundedCardPanel(BgAlt, BorderSubtle, 18)
-            {
-                Location = new Point(0, 52),
-                Size = new Size(404, 42),
-                Padding = new Padding(16, 10, 16, 8)
-            };
+            actionLayout.Controls.Add(_txtDiskName, 0, 1);
+            actionLayout.Controls.Add(new Label { Text = "Password o chiave di recupero", AutoSize = true }, 0, 2);
             _txtSecret = new TextBox
             {
-                PlaceholderText = "Password",
                 UseSystemPasswordChar = true,
-                BackColor = BgAlt,
-                ForeColor = TextPrimary,
-                BorderStyle = BorderStyle.None,
-                Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9.8f)
+                Dock = DockStyle.Top,
+                Margin = new Padding(3, 3, 3, 10)
             };
-            pwdBox.Controls.Add(_txtSecret);
+            actionLayout.Controls.Add(_txtSecret, 0, 3);
 
-            _rowMount = new Panel
+            var recoveryActions = new FlowLayoutPanel
             {
-                Location = new Point(0, 108),
-                Size = new Size(404, 42)
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                Margin = new Padding(0, 0, 0, 8)
             };
+            _lnkRecoveryToggle = new LinkLabel { Text = "Usa chiave di recupero", AutoSize = true, Margin = new Padding(3, 5, 16, 5) };
+            _lnkRecoveryToggle.LinkClicked += (_, _) => ToggleRecoveryMode();
+            _lnkReset = new LinkLabel { Text = "Reimposta password", AutoSize = true, Visible = false, Margin = new Padding(3, 5, 3, 5) };
+            _lnkReset.LinkClicked += (_, _) => ResetPasswordFlow();
+            recoveryActions.Controls.AddRange(new Control[] { _lnkRecoveryToggle, _lnkReset });
+            actionLayout.Controls.Add(recoveryActions, 0, 4);
 
-            _btnDrive = new PillButton("V:", BgAlt, BorderSubtle, TextPrimary, BorderSubtle, TextPrimary)
+            _rowMount = new TableLayoutPanel
             {
-                Location = new Point(0, 0),
-                Size = new Size(76, 42)
+                ColumnCount = 2,
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                Visible = false,
+                Margin = new Padding(0, 0, 0, 8)
             };
+            _rowMount.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            _rowMount.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            _btnDrive = new Button { Text = "V:", AutoSize = true, Margin = new Padding(3, 3, 8, 3) };
             _btnDrive.Click += (_, _) =>
             {
                 _driveIndex = (_driveIndex + 1) % _drives.Length;
                 _btnDrive.Text = _drives[_driveIndex];
             };
-
-            _btnPrimaryAction = new PillButton("Sblocca", Accent, Accent, Color.White, AccentHover, Color.White)
-            {
-                Location = new Point(86, 0),
-                Size = new Size(318, 42),
-                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold)
-            };
+            _btnPrimaryAction = new Button { Text = "Sblocca e monta", AutoSize = true, Dock = DockStyle.Fill };
             _btnPrimaryAction.Click += (_, _) => UnlockAndMount();
-            _rowMount.Controls.AddRange(new Control[] { _btnDrive, _btnPrimaryAction });
+            _rowMount.Controls.Add(_btnDrive, 0, 0);
+            _rowMount.Controls.Add(_btnPrimaryAction, 1, 0);
 
-            _btnSecondaryAction = new PillButton("Cifra cartella", Accent, Accent, Color.White, AccentHover, Color.White)
-            {
-                Location = new Point(0, 108),
-                Size = new Size(404, 42),
-                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
-                Visible = false
-            };
+            _btnSecondaryAction = new Button { Text = "Cifra cartella", AutoSize = true, Dock = DockStyle.Top, Visible = false };
             _btnSecondaryAction.Click += (_, _) => InitializeOrEncryptFolder();
+            actionLayout.Controls.Add(_rowMount, 0, 5);
+            actionLayout.Controls.Add(_btnSecondaryAction, 0, 6);
+            _panelActionForm.Controls.Add(actionLayout);
+            AddContentRow(_panelActionForm);
 
-            _lnkRecoveryToggle = new LinkLabel
+            FormClosed += (_, _) =>
             {
-                Text = "Usa chiave di recupero",
-                LinkColor = TextMuted,
-                ActiveLinkColor = Accent,
-                LinkBehavior = LinkBehavior.HoverUnderline,
-                Location = new Point(4, 162),
-                AutoSize = true
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
             };
-            _lnkRecoveryToggle.LinkClicked += (_, _) => ToggleRecoveryMode();
-
-            _lnkReset = new LinkLabel
-            {
-                Text = "Nuova password",
-                LinkColor = Accent,
-                ActiveLinkColor = AccentHover,
-                LinkBehavior = LinkBehavior.HoverUnderline,
-                Location = new Point(292, 162),
-                Size = new Size(108, 20),
-                TextAlign = ContentAlignment.MiddleRight,
-                Visible = false
-            };
-            _lnkReset.LinkClicked += (_, _) => ResetPasswordFlow();
-
-            _panelActionForm.Controls.AddRange(new Control[]
-            {
-                nameBox, pwdBox, _rowMount, _btnSecondaryAction, _lnkRecoveryToggle, _lnkReset
-            });
-            Controls.Add(_panelActionForm);
         }
 
         private void ToggleRecoveryMode()
@@ -419,20 +395,22 @@ namespace LocalCrypto
                 _panelActiveDrive.Visible = true;
                 _lblActiveTitle.Text = $"{_activeVault.DiskName} ({_activeVault.DriveLetter})";
                 _lblActiveSub.Text = _activeVault.EncryptedFolder;
-
-                _panelFolderCard.Location = new Point(28, 228);
+                _panelFolderCard.Visible = true;
                 _panelActionForm.Visible = false;
-                ClientSize = new Size(460, 382);
+                PerformLayout();
                 return;
             }
 
             _panelActiveDrive.Visible = false;
-            _panelFolderCard.Location = new Point(28, 76);
+            _panelFolderCard.Visible = true;
 
             if (string.IsNullOrEmpty(_selectedFolder))
             {
                 _panelActionForm.Visible = false;
-                ClientSize = new Size(460, 232);
+                _lblFolderName.Text = "Nessuna cartella selezionata";
+                _lblFolderFullPath.Text = "Seleziona una cartella locale o su Google Drive";
+                _badgeFolderState.Visible = false;
+                PerformLayout();
                 return;
             }
 
@@ -446,12 +424,12 @@ namespace LocalCrypto
             {
                 string savedName = VaultCrypto.GetVaultName(_selectedFolder);
                 _txtDiskName.Text = savedName;
-                _badgeFolderState.SetState("Cifrata", Color.FromArgb(219, 234, 254), Accent);
+                SetFolderState("Stato: Cifrata");
                 _rowMount.Visible = true;
                 _btnSecondaryAction.Visible = false;
                 _lnkRecoveryToggle.Visible = true;
                 _lnkReset.Visible = _recoveryMode;
-                ClientSize = new Size(460, 430);
+                _txtSecret.PlaceholderText = _recoveryMode ? "Chiave di recupero" : "Password";
             }
             else
             {
@@ -459,13 +437,20 @@ namespace LocalCrypto
                 _recoveryMode = false;
                 _txtSecret.UseSystemPasswordChar = true;
                 _txtSecret.PlaceholderText = "Password (min. 6 caratteri)";
-                _badgeFolderState.SetState("In chiaro", Color.FromArgb(254, 243, 199), Color.FromArgb(180, 83, 9));
+                SetFolderState("Stato: Non cifrata");
                 _rowMount.Visible = false;
                 _btnSecondaryAction.Visible = true;
                 _lnkRecoveryToggle.Visible = false;
                 _lnkReset.Visible = false;
-                ClientSize = new Size(460, 405);
             }
+
+            PerformLayout();
+        }
+
+        private void SetFolderState(string text)
+        {
+            _badgeFolderState.Text = text;
+            _badgeFolderState.AccessibleName = text;
         }
 
         private void StartIpcListener(string pipeName)
@@ -584,76 +569,65 @@ namespace LocalCrypto
             {
                 Text = "Chiave di recupero",
                 AutoScaleMode = AutoScaleMode.Dpi,
-                ClientSize = new Size(440, 230),
+                ClientSize = new Size(500, 250),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
-                MinimizeBox = false,
-                BackColor = BgRoot,
-                ForeColor = TextPrimary,
-                Font = new Font("Segoe UI", 9.5f)
+                MinimizeBox = false
             };
 
-            dlg.Controls.Add(new Label
+            var layout = new TableLayoutPanel
             {
-                Text = "Chiave di recupero",
-                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-                Location = new Point(22, 18),
-                AutoSize = true
-            });
-
-            var keyCard = new RoundedCardPanel(BgAlt, BorderSubtle, 16)
-            {
-                Location = new Point(22, 56),
-                Size = new Size(396, 46),
-                Padding = new Padding(12, 12, 12, 10)
+                Dock = DockStyle.Fill,
+                Padding = new Padding(16),
+                ColumnCount = 1,
+                RowCount = 4
             };
-
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(new Label
+            {
+                Text = "Conserva questa chiave in un luogo sicuro.",
+                AutoSize = true,
+                Margin = new Padding(3, 3, 3, 10)
+            }, 0, 0);
             var txtKey = new TextBox
             {
                 Text = recoveryKey,
                 ReadOnly = true,
-                BorderStyle = BorderStyle.None,
-                BackColor = BgAlt,
-                ForeColor = TextPrimary,
-                Font = new Font("Consolas", 10.5f, FontStyle.Bold),
-                TextAlign = HorizontalAlignment.Center,
-                Dock = DockStyle.Fill
+                Dock = DockStyle.Top,
+                Font = new Font("Consolas", 10f, FontStyle.Regular),
+                Margin = new Padding(3, 3, 3, 12)
             };
-            keyCard.Controls.Add(txtKey);
-            dlg.Controls.Add(keyCard);
-
-            var btnCopy = new PillButton("Copia", BgAlt, BorderSubtle, TextPrimary, BorderSubtle, TextPrimary)
+            layout.Controls.Add(txtKey, 0, 1);
+            var buttons = new FlowLayoutPanel
             {
-                Location = new Point(22, 118),
-                Size = new Size(124, 38)
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false
             };
+            var btnDone = new Button { Text = "Chiudi", AutoSize = true, DialogResult = DialogResult.OK };
+            var btnPrint = new Button { Text = "Stampa...", AutoSize = true };
+            var btnSave = new Button { Text = "Salva...", AutoSize = true };
+            var btnCopy = new Button { Text = "Copia", AutoSize = true };
             btnCopy.Click += (_, _) =>
             {
                 Clipboard.SetText(recoveryKey);
                 btnCopy.Text = "Copiata";
-            };
-
-            var btnSave = new PillButton("Salva .txt", Accent, Accent, Color.White, AccentHover, Color.White)
-            {
-                Location = new Point(156, 118),
-                Size = new Size(130, 38)
             };
             btnSave.Click += (_, _) =>
             {
                 using var sfd = new SaveFileDialog
                 {
                     Filter = "File di testo (*.txt)|*.txt",
-                    FileName = $"Recovery_{diskName}.txt"
+                    FileName = $"Recovery_{string.Join("_", diskName.Split(Path.GetInvalidFileNameChars()))}.txt"
                 };
                 if (sfd.ShowDialog() == DialogResult.OK)
                     File.WriteAllText(sfd.FileName, sheet);
-            };
-
-            var btnPrint = new PillButton("Stampa", BgRoot, BorderSubtle, TextPrimary, BgAlt, TextPrimary)
-            {
-                Location = new Point(296, 118),
-                Size = new Size(122, 38)
             };
             btnPrint.Click += (_, _) =>
             {
@@ -667,15 +641,10 @@ namespace LocalCrypto
                 if (printDlg.ShowDialog() == DialogResult.OK)
                     pd.Print();
             };
-
-            var btnDone = new PillButton("Chiudi", BgRoot, BorderSubtle, TextMuted, BgAlt, TextPrimary)
-            {
-                Location = new Point(22, 170),
-                Size = new Size(396, 38),
-                DialogResult = DialogResult.OK
-            };
-
-            dlg.Controls.AddRange(new Control[] { btnCopy, btnSave, btnPrint, btnDone });
+            buttons.Controls.AddRange(new Control[] { btnDone, btnPrint, btnSave, btnCopy });
+            layout.Controls.Add(buttons, 0, 3);
+            dlg.Controls.Add(layout);
+            dlg.AcceptButton = btnDone;
             dlg.ShowDialog(this);
         }
 
@@ -757,42 +726,51 @@ namespace LocalCrypto
             {
                 Text = "Nuova password",
                 AutoScaleMode = AutoScaleMode.Dpi,
-                ClientSize = new Size(340, 145),
+                ClientSize = new Size(380, 160),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
-                MinimizeBox = false,
-                BackColor = BgRoot,
-                ForeColor = TextPrimary
+                MinimizeBox = false
             };
 
-            var card = new RoundedCardPanel(BgAlt, BorderSubtle, 18)
+            var layout = new TableLayoutPanel
             {
-                Location = new Point(20, 18),
-                Size = new Size(300, 42),
-                Padding = new Padding(14, 10, 14, 8)
+                Dock = DockStyle.Fill,
+                Padding = new Padding(16),
+                ColumnCount = 1,
+                RowCount = 3
             };
-
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(new Label
+            {
+                Text = "Inserisci una password di almeno 6 caratteri:",
+                AutoSize = true,
+                Margin = new Padding(3, 3, 3, 8)
+            }, 0, 0);
             var box = new TextBox
             {
-                PlaceholderText = "Nuova password (min. 6 caratteri)",
                 UseSystemPasswordChar = true,
-                BackColor = BgAlt,
-                ForeColor = TextPrimary,
-                BorderStyle = BorderStyle.None,
-                Dock = DockStyle.Fill
+                Dock = DockStyle.Top,
+                Margin = new Padding(3, 3, 3, 10)
             };
-            card.Controls.Add(box);
-
-            var ok = new PillButton("Salva", Accent, Accent, Color.White, AccentHover, Color.White)
+            layout.Controls.Add(box, 0, 1);
+            var buttons = new FlowLayoutPanel
             {
-                Location = new Point(20, 76),
-                Size = new Size(300, 40),
-                DialogResult = DialogResult.OK
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false
             };
-
-            dlg.Controls.AddRange(new Control[] { card, ok });
+            var ok = new Button { Text = "Salva", AutoSize = true, DialogResult = DialogResult.OK };
+            var cancel = new Button { Text = "Annulla", AutoSize = true, DialogResult = DialogResult.Cancel };
+            buttons.Controls.AddRange(new Control[] { cancel, ok });
+            layout.Controls.Add(buttons, 0, 2);
+            dlg.Controls.Add(layout);
             dlg.AcceptButton = ok;
+            dlg.CancelButton = cancel;
 
             return dlg.ShowDialog() == DialogResult.OK ? box.Text : "";
         }
@@ -828,137 +806,4 @@ namespace LocalCrypto
         }
     }
 
-    public sealed class RoundedCardPanel : Panel
-    {
-        private readonly Color _fill;
-        private readonly Color _border;
-        private readonly int _radius;
-
-        public RoundedCardPanel(Color fill, Color border, int radius)
-        {
-            _fill = fill;
-            _border = border;
-            _radius = radius;
-            BackColor = Color.Transparent;
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using var path = PillButton.CreateRoundRect(rect, _radius);
-            using var brush = new SolidBrush(_fill);
-            using var pen = new Pen(_border, 1);
-            e.Graphics.FillPath(brush, path);
-            e.Graphics.DrawPath(pen, path);
-        }
-    }
-
-    public sealed class PillBadge : Control
-    {
-        private Color _bg;
-        public PillBadge(string text, Color bg, Color fg)
-        {
-            Text = text;
-            _bg = bg;
-            ForeColor = fg;
-            Font = new Font("Segoe UI Semibold", 8.2f, FontStyle.Bold);
-            Size = new Size(80, 24);
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
-        }
-
-        public void SetState(string text, Color bg, Color fg)
-        {
-            Text = text;
-            _bg = bg;
-            ForeColor = fg;
-            Invalidate();
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using var path = PillButton.CreateRoundRect(rect, Height / 2);
-            using var brush = new SolidBrush(_bg);
-            e.Graphics.FillPath(brush, path);
-            TextRenderer.DrawText(e.Graphics, Text, Font, rect, ForeColor,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        }
-    }
-
-    public sealed class PillButton : Control, IButtonControl
-    {
-        private readonly Color _bg;
-        private readonly Color _border;
-        private readonly Color _fg;
-        private readonly Color _hoverBg;
-        private readonly Color _hoverFg;
-        private bool _hover;
-
-        public DialogResult DialogResult { get; set; } = DialogResult.None;
-
-        public PillButton(string text, Color bg, Color border, Color fg, Color hoverBg, Color hoverFg)
-        {
-            Text = text;
-            _bg = bg;
-            _border = border;
-            _fg = fg;
-            _hoverBg = hoverBg;
-            _hoverFg = hoverFg;
-            Cursor = Cursors.Hand;
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
-        }
-
-        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
-        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
-        protected override void OnClick(EventArgs e)
-        {
-            if (!Enabled) return;
-            base.OnClick(e);
-            if (DialogResult != DialogResult.None && FindForm() is Form f)
-                f.DialogResult = DialogResult;
-        }
-
-        public void NotifyDefault(bool value) { }
-
-        public void PerformClick()
-        {
-            if (Enabled)
-                OnClick(EventArgs.Empty);
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using var path = CreateRoundRect(rect, Height / 2);
-
-            Color fill = !Enabled ? Color.FromArgb(245, 245, 247) : (_hover ? _hoverBg : _bg);
-            Color textCol = !Enabled ? Color.FromArgb(174, 174, 178) : (_hover ? _hoverFg : _fg);
-            Color borderCol = !Enabled ? Color.FromArgb(229, 229, 234) : (_hover ? _hoverBg : _border);
-
-            using var brush = new SolidBrush(fill);
-            using var pen = new Pen(borderCol, 1);
-
-            e.Graphics.FillPath(brush, path);
-            e.Graphics.DrawPath(pen, path);
-
-            TextRenderer.DrawText(e.Graphics, Text, Font, rect, textCol,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-        }
-
-        public static GraphicsPath CreateRoundRect(Rectangle r, int radius)
-        {
-            int d = Math.Max(1, radius * 2);
-            var p = new GraphicsPath();
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
-        }
-    }
 }
