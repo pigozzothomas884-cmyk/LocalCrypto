@@ -128,10 +128,16 @@ namespace LocalCrypto
             {
                 if (e.CloseReason == CloseReason.UserClosing)
                 {
-                    if (_activeVault != null)
-                    {
-                        LockAndUnmount();
-                    }
+                    e.Cancel = true;
+                    Hide();
+                    _trayIcon.ShowBalloonTip(
+                        2000,
+                        "LocalCrypto resta attivo",
+                        _activeVault == null
+                            ? "L'app è ancora disponibile nell'area di notifica."
+                            : $"Il disco {_activeVault.DriveLetter} resta montato. Apri LocalCrypto dall'area di notifica per gestirlo.",
+                        ToolTipIcon.Info);
+                    return;
                 }
 
                 if (_activeVault != null)
@@ -142,6 +148,8 @@ namespace LocalCrypto
 
                 _trayIcon.Visible = false;
             };
+
+            FormClosed += (_, _) => _trayIcon.Dispose();
 
             var scrollPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
             var content = new TableLayoutPanel
