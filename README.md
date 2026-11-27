@@ -1,11 +1,11 @@
 # LocalCrypto
 
-🇮🇹 [Italiano](#italiano) | 🇬🇧 [English](#english)
+[Italiano](#italiano) | [English](#english)
 
 ---
 
 <a id="italiano"></a>
-## 🇮🇹 Italiano
+## Italiano
 
 Applicazione per Windows (system tray, .NET 8) che cifra cartelle locali e le monta come unità virtuale privata. Nessun server, nessun account, nessun aggiornamento forzato.
 
