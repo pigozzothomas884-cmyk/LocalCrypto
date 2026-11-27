@@ -72,7 +72,7 @@ LocalCrypto non è stato sottoposto a un audit di sicurezza indipendente. Per da
 ---
 
 <a id="english"></a>
-## 🇬🇧 English
+## English
 
 A Windows system tray app (.NET 8) that encrypts local folders and mounts them as a private virtual drive. No server, no account, no forced updates.
 
